@@ -1,0 +1,19 @@
+{
+  "name": "Viral Cyb",
+  "short_name": "Viral Cyb",
+  "description": "Teste la viralité de ton son : score viral, mix & master, stems, paroles, micro prédictif et détecteur IA.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "categories": ["music", "productivity"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

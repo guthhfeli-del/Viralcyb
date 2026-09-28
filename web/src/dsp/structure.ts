@@ -418,6 +418,7 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
     let best = -1, bestK = -1;
     for (let q = 0; q < k; q++) {
       if (spans.length && inSpan(raws[k]) !== inSpan(raws[q])) continue;
+      if (Math.abs(raws[k].energy - raws[q].energy) > 0.3) continue; // a breakdown is not its full-band twin
       const lenRatio = (raws[k].b - raws[k].a) / (raws[q].b - raws[q].a);
       if (lenRatio < 0.4 || lenRatio > 2.5) continue;
       const s = sim(raws[k], raws[q]);
@@ -511,12 +512,14 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
   const v10 = percentile(fv, 10), v90 = percentile(fv, 90);
   let firstVocalTime = NaN;
   if (v90 - v10 > 0.04) {
+    // voiced for most of the following second (syllable gaps are allowed)
     const hold = Math.max(1, Math.round(1 / inp.frames.hopSec));
     const thrV = v10 + 0.5 * (v90 - v10);
     for (let f = 0; f + hold < fv.length; f++) {
-      let ok = true;
-      for (let k = 0; k < hold; k += 2) if (fv[f + k] < thrV) { ok = false; break; }
-      if (ok) {
+      if (fv[f] < thrV) continue;
+      let above = 0;
+      for (let k = 0; k < hold; k++) if (fv[f + k] >= thrV) above++;
+      if (above >= 0.7 * hold) {
         firstVocalTime = (f * inp.frames.hop) / inp.frames.fs;
         break;
       }

@@ -1,0 +1,76 @@
+:root {
+  color-scheme: dark;
+
+  /* canvas */
+  --bg: #09090b;
+  --bg-elev: #0e0e11;
+  --surface: #121216;
+  --surface-2: #17171c;
+  --surface-3: #1d1d23;
+  --line: rgba(236, 234, 242, 0.07);
+  --line-2: rgba(236, 234, 242, 0.12);
+  --line-3: rgba(236, 234, 242, 0.2);
+
+  /* ink */
+  --text: #ecebf1;
+  --text-2: #a9a6b4;
+  --text-3: #6f6c7b;
+  --text-4: #4a4855;
+
+  /* accents — muted mint & lavender, never neon */
+  --green: #8fdcae;
+  --green-2: #6fbf92;
+  --green-ink: #0f2419;
+  --green-wash: rgba(143, 220, 174, 0.09);
+  --violet: #a898f5;
+  --violet-2: #8a79dd;
+  --violet-ink: #1a1633;
+  --violet-wash: rgba(168, 152, 245, 0.1);
+  --amber: #e9c28c;
+  --rose: #ec9d9d;
+
+  --grad: linear-gradient(100deg, var(--green) 0%, #9fc3d8 50%, var(--violet) 100%);
+
+  /* type */
+  --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+
+  --fs-11: 0.6875rem;
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-14: 0.875rem;
+  --fs-15: 0.9375rem;
+  --fs-17: 1.0625rem;
+  --fs-20: 1.25rem;
+  --fs-24: 1.5rem;
+  --fs-32: 2rem;
+
+  /* shape & motion */
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 16px;
+  --r-4: 22px;
+  --ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 140ms;
+  --t-med: 280ms;
+  --t-slow: 620ms;
+
+  --rail-w: 232px;
+  --player-h: 76px;
+  --tabbar-h: 64px;
+  --gutter: 16px;
+  --content-max: 1240px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 28px;
+  }
+}
+@media (min-width: 1200px) {
+  :root {
+    --gutter: 44px;
+  }
+}

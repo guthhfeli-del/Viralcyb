@@ -175,10 +175,15 @@ function forwardMin(x: Float32Array, w: number): Float32Array {
 export function limit(L: Float32Array, R: Float32Array, fs: number, ceilingLin: number, releaseMs: number): { maxGr: number; avgGr: number } {
   const n = L.length;
   const need = new Float32Array(n);
+  // peak detector sees the half-sample (cubic) interpolation too, so most
+  // inter-sample overs are caught before the final true-peak check
+  const mid = (x: Float32Array, i: number) => (-(x[i - 1] ?? x[i]) + 9 * x[i] + 9 * (x[i + 1] ?? x[i]) - (x[i + 2] ?? x[i])) / 16;
   for (let i = 0; i < n; i++) {
-    const p = Math.max(Math.abs(L[i]), Math.abs(R[i]));
+    const p = Math.max(Math.abs(L[i]), Math.abs(R[i]), Math.abs(mid(L, i)), Math.abs(mid(R, i)));
     need[i] = p > ceilingLin ? ceilingLin / p : 1;
   }
+  // an inter-sample peak between i and i+1 must also be honoured at i+1
+  for (let i = n - 1; i > 0; i--) if (need[i - 1] < need[i]) need[i] = Math.min(need[i], need[i - 1]);
   const W = Math.max(2, Math.round(0.003 * fs));
   const h = forwardMin(need, W);
   // backward box average over W keeps g ≤ need and makes the attack a smooth ramp
@@ -257,48 +262,79 @@ export function master(channels: Float32Array[], fs: number, s: MasterSettings):
   if (s.saturation > 0) chain.push(`Saturation douce ${Math.round(s.saturation * 100)} %`);
 
   const pre = integratedLoudness([L0, R0], fs);
-  let gainDb = Number.isFinite(pre) ? s.targetLufs - pre : 0;
-  gainDb = clamp(gainDb, -24, 18);
-  let outL = L0, outR = R0;
-  let lufsOut = pre, maxGr = 0, avgGr = 0;
   const ceilLinTarget = fromDb(s.ceiling);
   let sampleCeil = fromDb(s.ceiling - 0.3);
-  let prevGain = NaN, prevLufs = NaN;
-  for (let iter = 0; iter < 7; iter++) {
-    outL = new Float32Array(L0);
-    outR = new Float32Array(R0);
+
+  interface Pass { L: Float32Array; R: Float32Array; lufs: number; maxGr: number; avgGr: number; gainDb: number }
+  const render = (gainDb: number): Pass => {
+    const L = new Float32Array(L0);
+    const R = new Float32Array(R0);
     const g = fromDb(gainDb);
-    for (let i = 0; i < outL.length; i++) {
-      outL[i] *= g;
-      outR[i] *= g;
+    for (let i = 0; i < L.length; i++) {
+      L[i] *= g;
+      R[i] *= g;
     }
-    saturate(outL, s.saturation);
-    saturate(outR, s.saturation);
-    ({ maxGr, avgGr } = limit(outL, outR, fs, sampleCeil, s.releaseMs));
-    // true-peak safety: tighten the sample ceiling if inter-sample overs remain
-    const tp = Math.max(truePeakLinear(outL), truePeakLinear(outR));
-    if (tp > ceilLinTarget) {
-      const scale = ceilLinTarget / tp;
-      for (let i = 0; i < outL.length; i++) {
-        outL[i] *= scale;
-        outR[i] *= scale;
+    saturate(L, s.saturation);
+    saturate(R, s.saturation);
+    const { maxGr, avgGr } = limit(L, R, fs, sampleCeil, s.releaseMs);
+    return { L, R, lufs: integratedLoudness([L, R], fs), maxGr, avgGr, gainDb };
+  };
+
+  // Never trade the mix for loudness: beyond these amounts of limiting the
+  // target is abandoned and the loudest acceptable pass is kept.
+  const MAX_AVG_GR = 4.5, MAX_PEAK_GR = 12;
+  const acceptable = (p: Pass) => p.avgGr <= MAX_AVG_GR && p.maxGr <= MAX_PEAK_GR;
+  const search = (startGain: number): Pass => {
+    let gainDb = clamp(startGain, -24, 18);
+    let best: Pass | null = null; // loudest acceptable pass so far
+    let tooHot = Infinity; // lowest gain found to over-limit
+    let prev: Pass | null = null;
+    let last!: Pass;
+    for (let iter = 0; iter < 8; iter++) {
+      last = render(gainDb);
+      if (acceptable(last)) {
+        if (!best || last.gainDb > best.gainDb) best = last;
+      } else tooHot = Math.min(tooHot, gainDb);
+      const err = s.targetLufs - last.lufs;
+      if (!Number.isFinite(last.lufs) || (Math.abs(err) < 0.15 && acceptable(last))) break;
+      let next: number;
+      if (!acceptable(last) || (err > 0 && gainDb + err >= tooHot)) {
+        // bisect between the loudest good pass and the over-limited one
+        const lo = best ? best.gainDb : gainDb - 6;
+        next = (lo + Math.min(tooHot, gainDb)) / 2;
+        if (best && Math.abs(next - best.gainDb) < 0.2) break;
+      } else {
+        // secant step: limiting makes loudness grow slower than gain
+        let slope = 1;
+        if (prev && Math.abs(last.gainDb - prev.gainDb) > 1e-3) slope = clamp((last.lufs - prev.lufs) / (last.gainDb - prev.gainDb), 0.2, 1.2);
+        next = gainDb + err / slope;
       }
-      sampleCeil *= scale;
+      prev = last;
+      gainDb = clamp(next, -24, 24);
     }
-    lufsOut = integratedLoudness([outL, outR], fs);
-    const err = s.targetLufs - lufsOut;
-    if (Math.abs(err) < 0.15 || !Number.isFinite(lufsOut)) break;
-    // secant step (limiting makes loudness grow slower than gain)
-    let step = err;
-    if (Number.isFinite(prevLufs) && Math.abs(lufsOut - prevLufs) > 1e-3) {
-      const slope = (lufsOut - prevLufs) / (gainDb - prevGain);
-      step = err / clamp(slope, 0.2, 1.2);
+    return acceptable(last) || !best ? last : best;
+  };
+
+  let out = search(Number.isFinite(pre) ? s.targetLufs - pre : 0);
+  // true-peak safety: if inter-sample overs remain, tighten the sample
+  // ceiling and search again from where we are, then trim any residue
+  const tpOf = (p: Pass) => Math.max(truePeakLinear(p.L), truePeakLinear(p.R));
+  const tp = tpOf(out);
+  if (tp > ceilLinTarget) {
+    sampleCeil *= ceilLinTarget / tp;
+    out = search(out.gainDb + ampDb(tp / ceilLinTarget));
+    const tp2 = tpOf(out);
+    if (tp2 > ceilLinTarget) {
+      const k = ceilLinTarget / tp2;
+      for (let i = 0; i < out.L.length; i++) {
+        out.L[i] *= k;
+        out.R[i] *= k;
+      }
+      out.lufs += ampDb(k);
     }
-    prevGain = gainDb;
-    prevLufs = lufsOut;
-    gainDb = clamp(gainDb + step, -24, 24);
-    if (maxGr > 14 && err > 0) break; // pushing further would wreck the mix
   }
+  const gainDb = out.gainDb;
+  const outL = out.L, outR = out.R, lufsOut = out.lufs, maxGr = out.maxGr, avgGr = out.avgGr;
   const truePeakOut = ampDb(Math.max(truePeakLinear(outL), truePeakLinear(outR)));
   chain.push(`Gain ${gainDb >= 0 ? "+" : ""}${gainDb.toFixed(1)} dB`);
   chain.push(`Limiteur ${s.ceiling.toFixed(1)} dBTP (réduction max ${maxGr.toFixed(1)} dB)`);

@@ -15,8 +15,12 @@ describe("mastering chain", () => {
       const p = PRESETS[id].settings;
       const { channels, report } = master([L, R], fs, { ...p, eq: p.tone });
       // either the target is reached, or the chain refused to over-limit a very dynamic mix
-      if (report.maxGrDb < 14) expect(Math.abs(report.lufsOut - p.targetLufs)).toBeLessThan(0.5);
-      else expect(report.lufsOut).toBeGreaterThan(report.lufsIn + 5);
+      if (!report.reachedTarget) {
+        expect(report.maxGrDb > 9 || report.avgGrDb > 3.5).toBe(true);
+        expect(report.lufsOut).toBeGreaterThan(report.lufsIn + 3);
+      }
+      expect(report.avgGrDb).toBeLessThanOrEqual(4.6);
+      expect(report.maxGrDb).toBeLessThanOrEqual(12.1);
       expect(report.reachedTarget).toBe(Math.abs(report.lufsOut - p.targetLufs) < 0.5);
       expect(Math.abs(integratedLoudness(channels, fs) - report.lufsOut)).toBeLessThan(0.01);
       const tp = ampDb(Math.max(truePeakLinear(channels[0]), truePeakLinear(channels[1])));

@@ -133,6 +133,7 @@ export function deviceReport(f: Features, d: DeviceProfile, family: string): Dev
     if (f.loudness.lra > 10) notes.push("Les passages calmes seront couverts par le bruit ambiant.");
   }
   if (d.id === "radio" && f.loudness.plr < 7) notes.push("Master déjà très compressé : le traitement radio va l'aplatir encore.");
+  if (d.id === "studio") return { id: d.id, score: 100, lowRetentionDb: 0, notes: ["Référence neutre : compare chaque support à cette écoute, en passant de l'un à l'autre pendant la lecture."] };
   if (!notes.length) notes.push(rms < 3 ? "Équilibre bien conservé sur ce support." : "Équilibre tonal modifié : écoute les éléments clés (voix, kick, basse).");
   return { id: d.id, score: Math.round(Math.max(0, Math.min(100, score))), lowRetentionDb, notes };
 }
