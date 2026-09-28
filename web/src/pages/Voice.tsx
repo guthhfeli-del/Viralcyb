@@ -69,7 +69,7 @@ export default function Voice() {
     setBusy("Envoi…");
     try {
       const job = await startJob("voice", { reference: ref.blob, source: s }, { pitch, steps: quality, consent: true, f0: true });
-      const done = await waitJob(job.id, (j) => setBusy(j.message ?? `Conversion… ${Math.round(j.progress * 100)} %`));
+      const done = await waitJob(job, (j) => setBusy(j.message ?? `Conversion… ${Math.round(j.progress * 100)} %`));
       const f = done.result?.files?.[0];
       if (!f) throw new Error("Aucun fichier renvoyé");
       const blob = await (await fetch(fileUrl(f.url))).blob();

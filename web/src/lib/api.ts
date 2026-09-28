@@ -79,11 +79,13 @@ export async function getJob(id: string): Promise<Job> {
   return r.json();
 }
 
-export async function waitJob(id: string, onUpdate?: (j: Job) => void, signal?: AbortSignal): Promise<Job> {
+/** Poll a job until it ends. A serverless API answers the POST with the finished job, so that one is not polled. */
+export async function waitJob(job: Job, onUpdate?: (j: Job) => void, signal?: AbortSignal): Promise<Job> {
   let delay = 600;
+  let j = job;
   for (;;) {
     if (signal?.aborted) throw new Error("Annulé");
-    const j = await getJob(id);
+    if (j.status !== "done" && j.status !== "error") j = await getJob(job.id);
     onUpdate?.(j);
     if (j.status === "done") return j;
     if (j.status === "error") throw new Error(j.error ?? "Échec du traitement");

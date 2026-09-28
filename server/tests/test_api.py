@@ -152,3 +152,29 @@ def test_lyrics_endpoint_validates_and_returns_variants(client, monkeypatch):
     ok = client.post("/api/lyrics/variants", json={"lyrics": "Reste encore un peu", "styles": ["tiktok"], "bpm": 120})
     assert ok.status_code == 200
     assert ok.json()["variants"][0]["style"] == "tiktok"
+
+
+def test_sync_jobs_answer_with_finished_job(client, monkeypatch):
+    import dataclasses
+
+    from app import main as main_mod
+
+    monkeypatch.setattr(main_mod, "settings", dataclasses.replace(main_mod.settings, sync_jobs=True))
+    r = client.post("/api/jobs/echo", files={"audio": ("song.wav", wav_bytes(), "audio/wav")})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "done"
+    assert r.json()["result"]["files"][0]["label"] == "echo"
+    r = client.post("/api/jobs/boom", files={"audio": ("a.wav", wav_bytes(), "audio/wav")})
+    assert r.json()["status"] == "error"
+
+
+def test_serverless_data_dir_is_writable_tmp(monkeypatch):
+    import tempfile
+
+    from app import config
+
+    monkeypatch.delenv("VIRALCYB_DATA_DIR", raising=False)
+    monkeypatch.setattr(config, "SERVERLESS", True)
+    assert config._data_dir() == Path(tempfile.gettempdir()) / "viralcyb"
+    monkeypatch.setenv("VIRALCYB_DATA_DIR", "/srv/vc")
+    assert config._data_dir() == Path("/srv/vc")

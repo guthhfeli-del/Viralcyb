@@ -97,7 +97,7 @@ export default function Master() {
     setBusy("Matchering (serveur)…");
     try {
       const job = await startJob("master_ref", { target: track.file ?? bufferToWavBlob(track.buffer, 24), reference: ref.file });
-      const done = await waitJob(job.id, (j) => setBusy(`Matchering (serveur)… ${Math.round(j.progress * 100)} %`));
+      const done = await waitJob(job, (j) => setBusy(`Matchering (serveur)… ${Math.round(j.progress * 100)} %`));
       const f = done.result?.files?.[0];
       if (!f) throw new Error("Aucun fichier renvoyé");
       const blob = await (await fetch(fileUrl(f.url))).blob();

@@ -3,10 +3,29 @@ import { useStore } from "../state/store";
 import { useDisplayBpm, useGenre } from "../state/hooks";
 import { analyzeLyrics } from "../engine/lyrics";
 import { postJson, startJob, waitJob } from "../lib/api";
-import { bufferToWavBlob } from "../lib/download";
+import { channelsToWavBlob } from "../lib/download";
+import { resampleBuffer } from "../lib/ml";
 import { Button, Chip, PageHead, Panel, Progress, Stat } from "../ui/Bits";
 import { EngineGate } from "../ui/EngineGate";
 import { NOTE_NAMES } from "../dsp/util";
+
+/** Serverless hosts cap request bodies around 4.5 MB: send speech-rate mono WAV in parts below that. */
+const MAX_UPLOAD_BYTES = 3_500_000;
+
+async function speechParts(buf: AudioBuffer): Promise<Blob[]> {
+  let rate = 16000;
+  let mono: Float32Array;
+  try {
+    [mono] = await resampleBuffer(buf, rate, 1);
+  } catch {
+    rate = 22050; // some engines refuse low offline sample rates
+    [mono] = await resampleBuffer(buf, rate, 1);
+  }
+  const step = Math.floor(MAX_UPLOAD_BYTES / 2);
+  const parts: Blob[] = [];
+  for (let i = 0; i < mono.length; i += step) parts.push(channelsToWavBlob([mono.subarray(i, i + step)], rate, 16));
+  return parts;
+}
 
 const EXAMPLE = `[Couplet 1]
 J'ai garé mes rêves au bord de la ville
@@ -65,9 +84,15 @@ export default function Lyrics() {
     setErr(null);
     setBusy("Envoi du morceau…");
     try {
-      const job = await startJob("transcribe", { audio: track.file ?? bufferToWavBlob(track.buffer, 16) });
-      const done = await waitJob(job.id, (j) => setBusy(j.message ?? `Transcription… ${Math.round(j.progress * 100)} %`));
-      const text = String(done.result?.text ?? "");
+      const parts = await speechParts(track.buffer);
+      const texts: string[] = [];
+      for (const [i, audio] of parts.entries()) {
+        const step = parts.length > 1 ? ` (${i + 1}/${parts.length})` : "";
+        const job = await startJob("transcribe", { audio });
+        const done = await waitJob(job, (j) => setBusy(`${j.message ?? `Transcription… ${Math.round(j.progress * 100)} %`}${step}`));
+        texts.push(String(done.result?.text ?? "").trim());
+      }
+      const text = texts.filter(Boolean).join("\n");
       if (!text) throw new Error("Aucune parole détectée.");
       setLyrics(text);
     } catch (e) {

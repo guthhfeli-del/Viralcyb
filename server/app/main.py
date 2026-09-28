@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -115,6 +116,11 @@ def create_app(store: JobStore | None = None) -> FastAPI:
             jobs.delete(job.id)
             raise
         jobs.submit(job, engine.run, files, params)
+        if settings.sync_jobs:
+            # serverless: the next poll may land on another instance, so answer with the finished job
+            deadline = time.monotonic() + settings.sync_timeout
+            while job.status in ("queued", "running") and time.monotonic() < deadline:
+                await asyncio.sleep(0.25)
         return job.public()
 
     @app.get("/api/jobs/{job_id}")

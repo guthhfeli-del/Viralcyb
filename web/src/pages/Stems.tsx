@@ -160,7 +160,7 @@ export default function Stems() {
     run("Envoi du morceau…", async () => {
       const src = track.file ?? bufferToWavBlob(track.buffer, 16);
       const job = await startJob("stems", { audio: src }, { model });
-      const done = await waitJob(job.id, (j) => {
+      const done = await waitJob(job, (j) => {
         setBusy(j.message ?? "Séparation…");
         setPct(j.progress);
       });

@@ -71,7 +71,7 @@ export default function Versions() {
     try {
       const src = track.file ?? bufferToWavBlob(track.buffer, 16);
       const job = await startJob("generate", { audio: src }, { style: aiStyle, prompt: aiPrompt, strength: aiStrength, bpm: Math.round(bpm), key: `${NOTE_NAMES[key.tonic]} ${key.mode}`, duration: Math.min(240, Math.round(features.meta.duration)) });
-      const done = await waitJob(job.id, (j) => setAiBusy(j.message ?? `Génération… ${Math.round(j.progress * 100)} %`));
+      const done = await waitJob(job, (j) => setAiBusy(j.message ?? `Génération… ${Math.round(j.progress * 100)} %`));
       const files = done.result?.files ?? [];
       for (const [i, f] of files.entries()) {
         const blob = await (await fetch(fileUrl(f.url))).blob();

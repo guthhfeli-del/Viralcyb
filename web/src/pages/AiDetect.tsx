@@ -28,7 +28,7 @@ export default function AiDetect() {
     setBusy("Envoi…");
     try {
       const job = await startJob("detect", { audio: track.file ?? bufferToWavBlob(track.buffer, 16) });
-      const done = await waitJob(job.id, (j) => setBusy(j.message ?? `Analyse… ${Math.round(j.progress * 100)} %`));
+      const done = await waitJob(job, (j) => setBusy(j.message ?? `Analyse… ${Math.round(j.progress * 100)} %`));
       setVerdict(done.result as unknown as ServerVerdict);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
