@@ -127,7 +127,7 @@ export default function Lyrics() {
           </label>
           {track && (
             <div className="actions">
-              <EngineGate engine="transcribe" what="La transcription des paroles depuis l'audio utilise Whisper (faster-whisper, MIT) sur le serveur, idéalement sur le stem voix.">
+              <EngineGate engine="transcribe" what="La transcription des paroles utilise Whisper : via OpenRouter (OPENROUTER_API_KEY sur le serveur) ou en local avec faster-whisper. Idéalement sur le stem voix.">
                 <Button icon="topline" onClick={transcribe} disabled={!!busy}>
                   Transcrire depuis le son
                 </Button>
@@ -208,8 +208,8 @@ export default function Lyrics() {
             </div>
           </Panel>
 
-          <Panel index="E" title="Variantes écrites par l'IA" aside={<Chip tone="violet">Claude · serveur</Chip>}>
-            <EngineGate engine="lyrics" what="Les réécritures utilisent l'API Claude (Anthropic) côté serveur : ajoute ANTHROPIC_API_KEY dans la configuration du serveur Viral Cyb.">
+          <Panel index="E" title="Variantes écrites par l'IA" aside={<Chip tone="violet">OpenRouter · serveur</Chip>}>
+            <EngineGate engine="lyrics" what="Les réécritures passent par OpenRouter (Claude par défaut) côté serveur : ajoute OPENROUTER_API_KEY dans l'environnement du serveur Viral Cyb (ou ANTHROPIC_API_KEY pour l'API Anthropic en direct).">
               <div className="stylechips" role="group" aria-label="Styles de variantes">
                 {STYLES.map((s) => {
                   const on = styles.includes(s.id);

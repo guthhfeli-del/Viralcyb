@@ -29,6 +29,11 @@ class Settings:
     acestep_url: str | None = os.environ.get("VIRALCYB_ACESTEP_URL")
     acestep_key: str | None = os.environ.get("VIRALCYB_ACESTEP_KEY")
     claude_model: str = os.environ.get("VIRALCYB_CLAUDE_MODEL", "claude-opus-5")
+    # OpenRouter (OPENROUTER_API_KEY) — preferred when set
+    openrouter_base: str = os.environ.get("VIRALCYB_OPENROUTER_BASE", "https://openrouter.ai/api/v1").rstrip("/")
+    openrouter_model: str = os.environ.get("VIRALCYB_OPENROUTER_MODEL", "anthropic/claude-opus-5")
+    openrouter_stt_model: str = os.environ.get("VIRALCYB_OPENROUTER_STT_MODEL", "openai/whisper-1")
+    public_url: str | None = os.environ.get("VIRALCYB_PUBLIC_URL")
 
 
 settings = Settings()

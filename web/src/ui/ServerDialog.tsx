@@ -7,10 +7,10 @@ import { Button } from "./Bits";
 const ENGINE_LABELS: Record<EngineId, string> = {
   stems: "Séparation de stems (Demucs / RoFormer)",
   master_ref: "Master par référence (Matchering)",
-  transcribe: "Transcription des paroles (Whisper)",
+  transcribe: "Transcription des paroles (Whisper · OpenRouter ou local)",
   topline: "Transcription MIDI (Basic Pitch)",
   detect: "Détecteur IA (SONICS)",
-  lyrics: "Variantes de paroles (Claude)",
+  lyrics: "Variantes de paroles (OpenRouter · Claude)",
   voice: "Conversion de voix (Seed-VC)",
   generate: "Génération de versions (ACE-Step)",
 };

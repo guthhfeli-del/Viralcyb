@@ -84,6 +84,7 @@ def test_transcribe_engine(monkeypatch, ctx, song):
     mod.WhisperModel = WhisperModel
     install(monkeypatch, "faster_whisper", mod)
     monkeypatch.setattr(transcribe, "_model", None)
+    monkeypatch.setattr(transcribe, "has_module", lambda n: n == "faster_whisper")
     res = transcribe.TranscribeEngine().run(ctx, {"audio": song}, {})
     assert res["text"] == "Reste encore un peu\nla ville est à nous"
     assert res["language"] == "fr"

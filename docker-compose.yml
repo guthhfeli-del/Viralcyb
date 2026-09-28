@@ -4,11 +4,14 @@ services:
       context: .
       args:
         # Engines baked into the image (see server/requirements-engines.txt).
-        ENGINES: "matchering faster-whisper"
+        ENGINES: "matchering"
     ports:
       - "8000:8000"
     environment:
-      # Lyric variants (Claude API)
+      # Lyric variants + Whisper transcription (OpenRouter), read from .env
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      VIRALCYB_OPENROUTER_MODEL: ${VIRALCYB_OPENROUTER_MODEL:-anthropic/claude-opus-5}
+      # Alternative: Anthropic API directly
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Restrict in production, e.g. https://viralcyb.app
       VIRALCYB_ALLOWED_ORIGINS: ${VIRALCYB_ALLOWED_ORIGINS:-*}

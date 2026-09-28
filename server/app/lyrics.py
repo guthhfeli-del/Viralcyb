@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from . import openrouter
 from .config import settings
 from .engines.base import Availability, has_module
 
@@ -61,12 +62,50 @@ class LyricsRefused(RuntimeError):
     pass
 
 
+# JSON Schema for strict structured output on OpenRouter (mirrors LyricVariants).
+VARIANTS_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "variants": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Nom court de la variante"},
+                    "style": {"type": "string", "description": "Style demandé, en clair"},
+                    "text": {"type": "string", "description": "Paroles complètes de la variante"},
+                    "notes": {"type": "string", "description": "Ce qui change et pourquoi"},
+                },
+                "required": ["title", "style", "text", "notes"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["variants"],
+    "additionalProperties": False,
+}
+
+
+def _anthropic_ready() -> bool:
+    return has_module("anthropic") and any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"))
+
+
+def lyrics_provider() -> str | None:
+    """OpenRouter wins when its key is set; the Anthropic API is the alternative."""
+    if openrouter.api_key():
+        return "openrouter"
+    if _anthropic_ready():
+        return "anthropic"
+    return None
+
+
 def lyrics_status() -> Availability:
-    if not has_module("anthropic"):
-        return Availability(False, "pip install anthropic")
-    if not any(os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE")):
-        return Availability(False, "Définis ANTHROPIC_API_KEY sur le serveur")
-    return Availability(True, f"Claude · {settings.claude_model}")
+    provider = lyrics_provider()
+    if provider == "openrouter":
+        return Availability(True, f"OpenRouter · {settings.openrouter_model}")
+    if provider == "anthropic":
+        return Availability(True, f"Claude · {settings.claude_model}")
+    return Availability(False, "Définis OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) sur le serveur")
 
 
 def build_user_message(req: VariantsRequest) -> str:
@@ -89,7 +128,24 @@ def build_user_message(req: VariantsRequest) -> str:
     )
 
 
-def generate_variants(req: VariantsRequest, client=None) -> list[LyricVariant]:
+def generate_variants(req: VariantsRequest, client=None, http=None) -> list[LyricVariant]:
+    if lyrics_provider() == "openrouter":
+        return _openrouter_variants(req, http)
+    return _anthropic_variants(req, client)
+
+
+def _openrouter_variants(req: VariantsRequest, http=None) -> list[LyricVariant]:
+    try:
+        data = openrouter.chat_json(SYSTEM, build_user_message(req), "lyric_variants", VARIANTS_SCHEMA, client=http)
+    except openrouter.OpenRouterRefusal as exc:
+        raise LyricsRefused("Le modèle a refusé de réécrire ce texte.") from exc
+    parsed = LyricVariants.model_validate(data)
+    if not parsed.variants:
+        raise RuntimeError("Réponse vide du modèle.")
+    return parsed.variants
+
+
+def _anthropic_variants(req: VariantsRequest, client=None) -> list[LyricVariant]:
     import anthropic
 
     client = client or anthropic.Anthropic()

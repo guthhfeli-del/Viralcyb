@@ -64,6 +64,12 @@ def write_wav(path: Path, data: np.ndarray, sr: int, subtype: str = "PCM_24") ->
     return path
 
 
+def write_flac(path: Path, data: np.ndarray, sr: int) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), np.clip(data, -1.0, 1.0), sr, format="FLAC", subtype="PCM_16")
+    return path
+
+
 def to_wav(src: Path, dst: Path, sr: int | None = None, mono: bool = False) -> Path:
     """Normalise any input to a WAV file (engines such as Matchering expect WAV)."""
     data, rate = load(src, target_sr=sr, mono=mono)
