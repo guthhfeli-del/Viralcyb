@@ -42,6 +42,21 @@ docker compose up --build            # http://localhost:8000
 
 Avec seulement `OPENROUTER_API_KEY`, le serveur active les **variantes de paroles** (Claude via OpenRouter) et la **transcription des paroles** (Whisper via OpenRouter) — aucun GPU requis.
 
+**Sur ton PC avec une carte NVIDIA (remix IA avec ACE-Step) :**
+
+1. Windows : installe [Docker Desktop](https://www.docker.com/products/docker-desktop/) (moteur WSL 2, activé par défaut) et le dernier pilote NVIDIA. Linux : Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+2. Vérifie que Docker voit la carte : `docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi` doit afficher le nom de ta carte.
+3. Dans le dossier du projet : `cp .env.example .env` (renseigne `OPENROUTER_API_KEY` si tu veux les paroles IA), puis :
+
+   ```bash
+   docker compose --profile gpu up --build
+   ```
+
+   Le premier démarrage construit ACE-Step (~15 min) puis télécharge ses modèles (~10 Go) : suis l'avancement avec `docker compose logs -f acestep`. Les démarrages suivants prennent environ une minute.
+4. Ouvre **http://localhost:8000** (pas l'adresse Vercel), charge ton son, puis Versions virales → « Remix IA dans un autre genre ».
+
+Carte à 6–8 Go de VRAM : ça marche avec le modèle par défaut (2B turbo). À partir de 16 Go, tu peux essayer un modèle plus fin, par exemple `ACESTEP_CONFIG_PATH=acestep-v15-xl-turbo` dans `.env` (tableau dans le README d'ACE-Step). Sans GPU, `docker compose up --build` lance tout sauf le remix IA.
+
 **En ligne sur Vercel (deux projets reliés au même repo) :**
 
 | Projet | Root Directory | Rôle |

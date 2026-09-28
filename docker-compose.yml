@@ -1,3 +1,11 @@
+# Viral Cyb on your own machine.
+#
+#   docker compose up --build                  # app + API on http://localhost:8000
+#   docker compose --profile gpu up --build    # + AI remix (ACE-Step 1.5) on an NVIDIA GPU
+#
+# The first GPU start builds ACE-Step (~15 min) and downloads its models
+# (~10 GB, kept in a volume); later starts take about a minute.
+
 services:
   viralcyb:
     build:
@@ -16,11 +24,47 @@ services:
       # Restrict in production, e.g. https://viralcyb.app
       VIRALCYB_ALLOWED_ORIGINS: ${VIRALCYB_ALLOWED_ORIGINS:-*}
       VIRALCYB_WHISPER_MODEL: ${VIRALCYB_WHISPER_MODEL:-small}
-      # ACE-Step 1.5 API server (see server/README.md)
-      VIRALCYB_ACESTEP_URL: ${VIRALCYB_ACESTEP_URL:-}
+      # AI remix: the acestep service below (gpu profile); shown as unavailable when it is not running
+      VIRALCYB_ACESTEP_URL: ${VIRALCYB_ACESTEP_URL:-http://acestep:8001}
+    extra_hosts:
+      # lets VIRALCYB_ACESTEP_URL point at an ACE-Step started outside Docker, on Linux too
+      - "host.docker.internal:host-gateway"
     volumes:
       - viralcyb-data:/data
     restart: unless-stopped
 
+  acestep:
+    profiles: ["gpu"]
+    image: viralcyb-acestep:ca1e85f
+    build:
+      # ACE-Step 1.5 (MIT), pinned commit
+      context: https://github.com/ace-step/ACE-Step-1.5.git#ca1e85fe9430179831e6bc6be790c332190a3866
+    environment:
+      ACESTEP_MODE: api
+      ACESTEP_API_HOST: 0.0.0.0
+      # 2B turbo fits GPUs from ~6 GB (CPU offload is switched on by itself on small cards);
+      # see the VRAM table in ACE-Step's README. Unset variables must stay absent, not empty.
+      ACESTEP_CONFIG_PATH: ${ACESTEP_CONFIG_PATH:-acestep-v15-turbo}
+      ACESTEP_LM_BACKEND: ${ACESTEP_LM_BACKEND:-pt}
+      NVIDIA_VISIBLE_DEVICES: all
+      TOKENIZERS_PARALLELISM: "false"
+    # no API key: only this machine (and the viralcyb container) can reach it
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - acestep-checkpoints:/app/checkpoints
+      - acestep-hf:/root/.cache/huggingface
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
 volumes:
   viralcyb-data:
+  acestep-checkpoints:
+  acestep-hf:
