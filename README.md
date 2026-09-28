@@ -42,6 +42,15 @@ docker compose up --build            # http://localhost:8000
 
 Avec seulement `OPENROUTER_API_KEY`, le serveur active les **variantes de paroles** (Claude via OpenRouter) et la **transcription des paroles** (Whisper via OpenRouter) — aucun GPU requis.
 
+**En ligne sur Vercel (deux projets reliés au même repo) :**
+
+| Projet | Root Directory | Rôle |
+|---|---|---|
+| `viralcyb` | `web` | l'interface — c'est l'adresse à ouvrir |
+| `server` | `server` | l'API FastAPI, avec `OPENROUTER_API_KEY` dans ses variables d'environnement |
+
+[`web/vercel.json`](web/vercel.json) redirige `/api/*` vers l'adresse de production du projet `server` : change-la si la tienne est différente. Sur Vercel, l'API tourne en fonctions serverless : les variantes de paroles et la transcription marchent, mais pas les moteurs lourds (Matchering, Demucs serveur, SONICS, Seed-VC, ACE-Step), qui demandent le serveur Docker.
+
 ## Ce qui marche sans GPU, et les alternatives
 
 | Besoin | Sans GPU ni serveur | Avec la clé OpenRouter | Qualité maximale (GPU) |
