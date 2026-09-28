@@ -56,7 +56,7 @@ export function scoreVirality(f: Features, genreId: GenreId): ViralityResult {
     score: tScore,
     value: `${t.toFixed(1)} s`,
     detail: `Le morceau capte l'attention à ${formatTime(t)} (hook détecté à ${formatTime(hookT)}). Sur TikTok, tout se joue dans les 3 premières secondes ; dans le top 10, l'intro moyenne est passée d'environ 20 s à 5 s.`,
-    tip: t > 5 ? `Démarre sur le hook (ou un extrait filtré du hook) : coupe ${Math.max(0, hookT - 2).toFixed(0)} s d'intro ou déplace le refrain en ouverture.` : "L'accroche est immédiate — garde ce départ.",
+    tip: t > 5 ? `Le hook n'arrive qu'à ${formatTime(hookT)} : ouvre le morceau avec 2 mesures du hook (filtré passe-bas) ou raccourcis ce qui le précède.` : "L'accroche est immédiate — garde ce départ.",
   });
 
   // 2. Hook strength: repetition of the hook, confidence, chorus lift

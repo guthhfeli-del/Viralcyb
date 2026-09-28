@@ -7,7 +7,7 @@ import type { Features } from "./types";
 import { genreById, type GenreId } from "./genres";
 import { tonalBalance } from "../dsp/tonal";
 import { hookTime } from "./virality";
-import { formatTime, midiToHz, NOTE_NAMES } from "../dsp/util";
+import { fmt, formatTime, midiToHz, NOTE_NAMES } from "../dsp/util";
 
 export type Severity = "haute" | "moyenne" | "basse";
 
@@ -161,7 +161,7 @@ export function buildAdvice(f: Features, genreId: GenreId): AdviceBundle {
     mix.push({
       id: "quiet", area: "master", severity: "moyenne",
       title: "Master trop faible pour le genre",
-      detail: `${L.integrated.toFixed(1)} LUFS pour une cible ${g.label} de ${g.lufs.min} à ${g.lufs.max} LUFS.`,
+      detail: `${fmt(L.integrated)} LUFS pour une cible ${g.label} de ${g.lufs.min} à ${g.lufs.max} LUFS.`,
       action: `Vise ${g.lufs.ideal} LUFS intégrés avec un limiteur (2–4 dB de réduction max) — preset dans l'onglet Master.`,
     });
   if (L.integrated > g.lufs.max + 0.5 || L.plr < 6)

@@ -108,6 +108,9 @@ export function pickPeaks(xs: ArrayLike<number>, minDistance: number, threshold 
   return taken.sort((a, b) => a - b);
 }
 
+/** Fixed-point number for display; "—" for ±Infinity/NaN (e.g. loudness of silence). */
+export const fmt = (x: number, digits = 1): string => (Number.isFinite(x) ? x.toFixed(digits) : "—");
+
 export function formatTime(sec: number): string {
   if (!Number.isFinite(sec)) return "–";
   const s = Math.max(0, sec);

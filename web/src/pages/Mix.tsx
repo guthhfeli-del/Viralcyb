@@ -6,7 +6,7 @@ import { genreById } from "../engine/genres";
 import { ToneChart } from "../ui/Charts";
 import { Bar, Chip, PageHead, Panel, Segmented, Stat } from "../ui/Bits";
 import { BlueprintStrip, Sparkline, StructureStrip } from "../ui/Structure";
-import { formatTime } from "../dsp/util";
+import { fmt, formatTime } from "../dsp/util";
 
 export default function Mix() {
   const features = useStore((s) => s.features);
@@ -93,11 +93,11 @@ export default function Mix() {
 
       <Panel index="C" title="Loudness & dynamique" aside={<span className="label">EBU R128 · BS.1770-4</span>}>
         <div className="statgrid">
-          <Stat label="Intégré" value={L.integrated.toFixed(1)} unit="LUFS" tone={lufsTone} hint={`cible ${profile.lufs.min} à ${profile.lufs.max}`} />
-          <Stat label="Court terme max" value={L.shortTermMax.toFixed(1)} unit="LUFS" />
+          <Stat label="Intégré" value={fmt(L.integrated)} unit="LUFS" tone={lufsTone} hint={`cible ${profile.lufs.min} à ${profile.lufs.max}`} />
+          <Stat label="Court terme max" value={fmt(L.shortTermMax)} unit="LUFS" />
           <Stat label="True peak" value={L.truePeak.toFixed(1)} unit="dBTP" tone={L.truePeak > -1 ? "bad" : "good"} hint="≤ −1 dBTP" />
           <Stat label="LRA" value={L.lra.toFixed(1)} unit="LU" hint="plage de loudness" />
-          <Stat label="PLR" value={L.plr.toFixed(1)} unit="dB" tone={L.plr < 6 ? "warn" : undefined} hint="punch : 6–12 dB" />
+          <Stat label="PLR" value={fmt(L.plr)} unit="dB" tone={L.plr < 6 ? "warn" : undefined} hint="punch : 6–12 dB" />
           <Stat label="Clipping" value={L.clippedSamples} unit="éch." tone={L.clippedSamples > 0 ? "bad" : "good"} />
         </div>
         <div className="sparkwrap">

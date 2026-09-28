@@ -55,9 +55,18 @@ export async function health(signal?: AbortSignal): Promise<Health> {
   }
 }
 
+/** File extension for an unnamed blob (e.g. a MediaRecorder take). */
+function extFor(mime: string): string {
+  if (mime.includes("webm")) return ".webm";
+  if (mime.includes("ogg")) return ".ogg";
+  if (mime.includes("mp4") || mime.includes("aac")) return ".m4a";
+  if (mime.includes("mpeg")) return ".mp3";
+  return ".wav";
+}
+
 export async function startJob(kind: string, files: Record<string, Blob | undefined>, fields: Record<string, string | number | boolean | undefined> = {}): Promise<Job> {
   const fd = new FormData();
-  for (const [k, v] of Object.entries(files)) if (v) fd.append(k, v, (v as File).name ?? `${k}.wav`);
+  for (const [k, v] of Object.entries(files)) if (v) fd.append(k, v, (v as File).name ?? `${k}${extFor(v.type)}`);
   for (const [k, v] of Object.entries(fields)) if (v !== undefined) fd.append(k, String(v));
   const r = await fetch(`${apiBase()}/api/jobs/${kind}`, { method: "POST", body: fd });
   if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.detail ?? `Erreur serveur (${r.status})`);

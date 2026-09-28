@@ -12,6 +12,7 @@ import { startJob, waitJob, fileUrl } from "../lib/api";
 import { Button, PageHead, Panel, Progress, Segmented, Stat } from "../ui/Bits";
 import { Dropzone } from "../ui/Dropzone";
 import type { LoudnessReport } from "../dsp/loudness";
+import { fmt } from "../dsp/util";
 import type { SpectrumProfile } from "../dsp/tonal";
 
 type Ref = { name: string; file: File; loudness: LoudnessReport; spectrum: SpectrumProfile };
@@ -91,11 +92,11 @@ export default function Master() {
   };
 
   const runMatchering = async () => {
-    if (!ref || !track.file) return;
+    if (!ref) return;
     setErr(null);
     setBusy("Matchering (serveur)…");
     try {
-      const job = await startJob("master_ref", { target: track.file, reference: ref.file });
+      const job = await startJob("master_ref", { target: track.file ?? bufferToWavBlob(track.buffer, 24), reference: ref.file });
       const done = await waitJob(job.id, (j) => setBusy(`Matchering (serveur)… ${Math.round(j.progress * 100)} %`));
       const f = done.result?.files?.[0];
       if (!f) throw new Error("Aucun fichier renvoyé");
@@ -170,10 +171,10 @@ export default function Master() {
           <div className="refbox">
             <div>
               <strong>{ref.name}</strong>
-              <p className="mono faint">{ref.loudness.integrated.toFixed(1)} LUFS · {ref.loudness.truePeak.toFixed(1)} dBTP · PLR {ref.loudness.plr.toFixed(1)}</p>
+              <p className="mono faint">{fmt(ref.loudness.integrated)} LUFS · {ref.loudness.truePeak.toFixed(1)} dBTP · PLR {ref.loudness.plr.toFixed(1)}</p>
             </div>
             <div className="refbox__actions">
-              {server.engines.master_ref?.available && track.file && (
+              {server.engines.master_ref?.available && (
                 <Button size="sm" variant="accent" icon="server" onClick={runMatchering} disabled={!!busy}>
                   Matchering (serveur)
                 </Button>
@@ -191,8 +192,8 @@ export default function Master() {
       {rep && mastered && (
         <Panel index="C" title="Résultat" aside={<span className="label">{mastered.preset === "reference" ? "référence" : PRESETS[mastered.preset as PresetId]?.label}</span>} className="rise">
           <div className="statgrid">
-            <Stat label="Avant" value={rep.lufsIn.toFixed(1)} unit="LUFS" />
-            <Stat label="Après" value={rep.lufsOut.toFixed(1)} unit="LUFS" tone={rep.reachedTarget ? "good" : "warn"} hint={rep.reachedTarget ? "cible atteinte" : "limité pour préserver le mix"} />
+            <Stat label="Avant" value={fmt(rep.lufsIn)} unit="LUFS" />
+            <Stat label="Après" value={fmt(rep.lufsOut)} unit="LUFS" tone={rep.reachedTarget ? "good" : "warn"} hint={rep.reachedTarget ? "cible atteinte" : "limité pour préserver le mix"} />
             <Stat label="True peak" value={rep.truePeakOut.toFixed(1)} unit="dBTP" tone={rep.truePeakOut <= -0.9 ? "good" : "warn"} />
             {!external && <Stat label="Limiteur max" value={rep.maxGrDb.toFixed(1)} unit="dB" tone={rep.maxGrDb > 8 ? "warn" : undefined} hint={`moy. ${rep.avgGrDb.toFixed(1)} dB`} />}
           </div>

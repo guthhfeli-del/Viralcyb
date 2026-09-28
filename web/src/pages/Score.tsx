@@ -7,7 +7,7 @@ import { TimbreMap } from "../ui/Charts";
 import { Bar, Button, Panel, Stat, scoreTone } from "../ui/Bits";
 import { player } from "../lib/player";
 import { usePlayer } from "../lib/usePlayer";
-import { formatTime } from "../dsp/util";
+import { fmt, formatTime } from "../dsp/util";
 import { hookTime } from "../engine/virality";
 
 export default function Score() {
@@ -57,7 +57,7 @@ export default function Score() {
         <Stat label="Accroche" value={hookTime(features).toFixed(1)} unit="s" tone={hookTime(features) <= 5 ? "good" : hookTime(features) <= 10 ? "warn" : "bad"} />
         <Stat label="Tempo" value={Math.round(bpm ?? features.rhythm.bpm)} unit="BPM" hint={features.rhythm.confidence < 0.2 ? "incertain" : undefined} />
         <Stat label="Tonalité" value={features.key.short} hint={`${features.key.nameFr} · ${features.key.camelot}`} />
-        <Stat label="Loudness" value={features.loudness.integrated.toFixed(1)} unit="LUFS" />
+        <Stat label="Loudness" value={fmt(features.loudness.integrated)} unit="LUFS" />
         <Stat label="Hook" value={`${s.hook.occurrences.length}×`} hint={`dès ${formatTime(s.firstHookTime)}`} tone="accent" />
         <Stat label="Durée" value={formatTime(features.meta.duration)} />
       </div>

@@ -4,6 +4,7 @@ import { Dropzone } from "../ui/Dropzone";
 import { Logo, NAV } from "../ui/Nav";
 import { Icon } from "../ui/Icon";
 import { ServerButton } from "../ui/ServerDialog";
+import { useInstallPrompt } from "../lib/install";
 
 const DESCRIPTIONS: Record<string, string> = {
   score: "Hook, accroche des 3 premières secondes, répétition, groove, loudness, format — 9 critères pondérés et expliqués.",
@@ -21,6 +22,7 @@ const DESCRIPTIONS: Record<string, string> = {
 export function Home({ onEnter }: { onEnter: () => void }) {
   const setPage = useStore((s) => s.setPage);
   const error = useStore((s) => s.error);
+  const install = useInstallPrompt();
   const open = (id: (typeof NAV)[number]["id"]) => {
     setPage(id);
     onEnter();
@@ -35,7 +37,14 @@ export function Home({ onEnter }: { onEnter: () => void }) {
             Viral <span className="serif italic">Cyb</span>
           </span>
         </div>
-        <ServerButton />
+        <div className="home__actions">
+          {install && (
+            <button className="linkbtn" onClick={() => void install()}>
+              <Icon name="download" size={15} /> Installer l'app
+            </button>
+          )}
+          <ServerButton />
+        </div>
       </header>
 
       <main className="home__main">

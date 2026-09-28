@@ -34,11 +34,13 @@ export function autocorrelation(x: ArrayLike<number>, maxLag: number): Float64Ar
 export function estimateTempo(env: Float32Array, hopSec: number, minBpm = 55, maxBpm = 215): TempoResult {
   const lagMin = Math.max(1, Math.floor(60 / maxBpm / hopSec));
   const lagMax = Math.ceil(60 / minBpm / hopSec);
+  // too short to hold two beats at the slowest tempo: no meaningful reading
+  if (env.length < 2 * lagMax + 2) return { bpm: 120, confidence: 0, pulseClarity: 0, alternatives: [] };
   const ac = autocorrelation(env, lagMax * 4 + 2);
   const r0 = ac[0] || 1;
   const score = new Float64Array(lagMax + 1);
   let best = -1, bestLag = lagMin;
-  for (let lag = lagMin; lag <= lagMax; lag++) {
+  for (let lag = lagMin; lag <= lagMax && lag < ac.length; lag++) {
     let s = ac[lag];
     if (2 * lag < ac.length) s += 0.5 * ac[2 * lag];
     if (3 * lag < ac.length) s += 0.33 * ac[3 * lag];

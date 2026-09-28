@@ -25,7 +25,7 @@ export function serverLabel(server: { ok: boolean; checked: boolean; engines: He
   if (!server.checked) return { text: "Connexion…", on: false };
   if (!server.ok) return { text: "Mode local", on: false };
   const n = Object.values(server.engines).filter((e) => e?.available).length;
-  return { text: n ? `Serveur · ${n} moteur${n > 1 ? "s" : ""} IA` : "Serveur · aucun moteur", on: n > 0 };
+  return { text: n ? `Serveur · ${n} moteur${n > 1 ? "s" : ""}` : "Serveur · aucun moteur", on: n > 0 };
 }
 
 export function ServerButton() {

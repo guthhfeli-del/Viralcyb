@@ -8,7 +8,7 @@ import { refreshServer, ServerButton } from "./ui/ServerDialog";
 import { player } from "./lib/player";
 import { useGenre, useDisplayBpm } from "./state/hooks";
 import { GENRES, type GenreId } from "./engine/genres";
-import { formatTime } from "./dsp/util";
+import { fmt, formatTime } from "./dsp/util";
 import { Empty } from "./ui/Bits";
 import { Dropzone } from "./ui/Dropzone";
 import { loadDemo, loadFile } from "./lib/loadTrack";
@@ -106,7 +106,7 @@ function TopBar({ onHome }: { onHome: () => void }) {
                 <span>{Math.round(bpm ?? features.rhythm.bpm)} BPM</span>
                 <span>{features.key.short} · {features.key.camelot}</span>
                 <span>{formatTime(features.meta.duration)}</span>
-                <span>{features.loudness.integrated.toFixed(1)} LUFS</span>
+                <span>{fmt(features.loudness.integrated)} LUFS</span>
               </span>
             )}
           </>
