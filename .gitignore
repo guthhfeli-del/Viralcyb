@@ -11,3 +11,4 @@ venv/
 server/data/
 *.egg-info/
 .env
+web/scripts/eval-structure/.cache/

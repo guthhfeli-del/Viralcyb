@@ -1,6 +1,9 @@
-import type { Section } from "../dsp/structure";
+import { useState } from "react";
+import { KIND_NAMES, SECTION_KINDS, type Section, type StructureResult } from "../dsp/structure";
 import type { Blueprint } from "../engine/advice";
 import { formatTime } from "../dsp/util";
+import { useStore } from "../state/store";
+import { Button, Segmented } from "./Bits";
 
 const KIND_TONE: Record<string, string> = {
   chorus: "var(--violet)",
@@ -40,6 +43,64 @@ export function StructureStrip({ sections, duration, total }: { sections: Sectio
           <span>{s.name}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Index of the section holding the hook (or -1). */
+export const hookSection = (st: StructureResult) => st.sections.findIndex((x) => st.hook.start >= x.start && st.hook.start < x.end);
+
+/** Detected structure you can listen to and correct, section by section. */
+export function SectionEditor({ structure, duration, onPlay }: { structure: StructureResult; duration: number; onPlay: (start: number, end: number) => void }) {
+  const relabel = useStore((s) => s.relabelSection);
+  const reset = useStore((s) => s.resetStructure);
+  const [sel, setSel] = useState<number | null>(null);
+  const hookIn = hookSection(structure);
+  const edited = structure.sections.some((x) => x.edited);
+  const cur = sel !== null ? structure.sections[sel] : undefined;
+  return (
+    <div className="secedit">
+      <div className="strip strip--edit" aria-label="Structure : touche une section pour l'écouter ou la corriger">
+        {structure.sections.map((x, i) => (
+          <button
+            key={i}
+            className={`strip__part${sel === i ? " is-sel" : ""}${x.edited ? " is-edited" : ""}`}
+            style={{ width: `${((x.end - x.start) / duration) * 100}%`, ["--tone" as string]: toneFor(x.name, x.kind) }}
+            aria-pressed={sel === i}
+            title={`${x.name} · ${formatTime(x.start)}–${formatTime(x.end)}${i === hookIn ? " · hook" : ""}`}
+            onClick={() => setSel(sel === i ? null : i)}
+          >
+            <span>{x.name}</span>
+            {i === hookIn && <i className="strip__hook" aria-label="hook" />}
+          </button>
+        ))}
+      </div>
+      {cur && sel !== null ? (
+        <div className="secedit__panel">
+          <div className="secedit__head">
+            <span className="mono">
+              {formatTime(cur.start)}–{formatTime(cur.end)}
+            </span>
+            {sel === hookIn && <span className="label secedit__hooktag">▲ hook ici</span>}
+            <Button size="sm" icon="play" onClick={() => onPlay(cur.start, cur.end)}>
+              Écouter
+            </Button>
+          </div>
+          <Segmented size="sm" ariaLabel="Type de section" value={cur.kind} options={SECTION_KINDS.map((k) => ({ value: k, label: KIND_NAMES[k] }))} onChange={(k) => relabel(sel, k)} />
+        </div>
+      ) : (
+        <p className="secedit__hint faint">
+          Détection automatique. Touche une section pour l'écouter ou corriger son type : le score se recalcule.
+          {edited && (
+            <>
+              {" "}
+              <button className="linkbtn" onClick={reset}>
+                Revenir à la détection
+              </button>
+            </>
+          )}
+        </p>
+      )}
     </div>
   );
 }

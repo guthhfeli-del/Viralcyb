@@ -4,6 +4,8 @@ import type { GenreId } from "../engine/genres";
 import type { MasterReport, PresetId } from "../dsp/master";
 import type { Health } from "../lib/api";
 import type { NoteEvent } from "../dsp/topline";
+import type { SectionKind, StructureResult } from "../dsp/structure";
+import { withSectionKind, withStructure } from "../engine/edit";
 
 export type PageId = "score" | "mix" | "devices" | "master" | "versions" | "stems" | "lyrics" | "topline" | "voice" | "ai";
 
@@ -31,6 +33,8 @@ interface State {
   page: PageId;
   track: Track | null;
   features: Features | null;
+  /** structure as detected, to undo user corrections */
+  detectedStructure: StructureResult | null;
   stage: string;
   progress: number;
   error: string | null;
@@ -44,6 +48,8 @@ interface State {
   setPage(p: PageId): void;
   setTrack(t: Track | null): void;
   setFeatures(f: Features | null): void;
+  relabelSection(index: number, kind: SectionKind): void;
+  resetStructure(): void;
   setStage(stage: string, progress: number): void;
   setError(e: string | null): void;
   setGenre(g: GenreId | "auto"): void;
@@ -61,6 +67,7 @@ export const useStore = create<State>((set) => ({
   page: "score",
   track: null,
   features: null,
+  detectedStructure: null,
   stage: "idle",
   progress: 0,
   error: null,
@@ -72,8 +79,10 @@ export const useStore = create<State>((set) => ({
   take: null,
   server: { ok: false, engines: {}, checked: false },
   setPage: (page) => set({ page }),
-  setTrack: (track) => set({ track, features: null, mastered: null, rendered: [], error: null, songTitle: track ? track.name.replace(/\.[a-z0-9]+$/i, "") : "" }),
-  setFeatures: (features) => set({ features }),
+  setTrack: (track) => set({ track, features: null, detectedStructure: null, mastered: null, rendered: [], error: null, songTitle: track ? track.name.replace(/\.[a-z0-9]+$/i, "") : "" }),
+  setFeatures: (features) => set({ features, detectedStructure: features?.structure ?? null }),
+  relabelSection: (index, kind) => set((s) => (s.features ? { features: withSectionKind(s.features, index, kind) } : {})),
+  resetStructure: () => set((s) => (s.features && s.detectedStructure ? { features: withStructure(s.features, s.detectedStructure) } : {})),
   setStage: (stage, progress) => set({ stage, progress }),
   setError: (error) => set({ error }),
   setGenre: (genre) => set({ genre }),
@@ -84,5 +93,5 @@ export const useStore = create<State>((set) => ({
   setSongTitle: (songTitle) => set({ songTitle }),
   setTake: (take) => set({ take }),
   setServer: (h) => set({ server: { ...h, checked: true } }),
-  reset: () => set({ track: null, features: null, mastered: null, rendered: [], stage: "idle", progress: 0, error: null, page: "score" }),
+  reset: () => set({ track: null, features: null, detectedStructure: null, mastered: null, rendered: [], stage: "idle", progress: 0, error: null, page: "score" }),
 }));

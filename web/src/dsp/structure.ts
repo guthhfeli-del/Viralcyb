@@ -1,13 +1,15 @@
 /**
  * Song structure analysis on beat-synchronous features:
- *  - self-similarity matrix (chroma + timbre)
- *  - Foote novelty → section boundaries snapped to bars
- *  - repetition (diagonal stripes) → hook / chorus detection
+ *  - spectral clustering of the recurrence graph → passages with the same music
+ *  - near-exact repetition of the vocal band → choruses (same words, same melody)
+ *  - repetition + energy → hook, which may sit in any section
  *  - intro length, first vocal, drops, best TikTok clip & micro-loop
+ * Method and measurements: docs/STRUCTURE.md.
  */
 import type { FrameFeatures } from "./frames";
 import { TIMBRE_BANDS } from "./frames";
-import { clamp, mean, percentile, pickPeaks, std, EPS } from "./util";
+import { clamp, mean, percentile, pickPeaks, EPS } from "./util";
+import { clusterEmbedding, laplacianEmbedding } from "./segment";
 
 export type SectionKind = "intro" | "verse" | "prechorus" | "chorus" | "bridge" | "outro" | "break";
 
@@ -19,6 +21,8 @@ export interface Section {
   name: string; // French display name
   energy: number; // 0..1 relative
   vocal: number; // 0..1 relative
+  loud: number; // dB (mean power)
+  edited?: boolean; // label set by the user
 }
 
 export interface Clip {
@@ -57,7 +61,7 @@ export interface StructureInput {
   momentary: number[]; // LUFS every 100 ms
 }
 
-const KIND_NAMES: Record<SectionKind, string> = {
+export const KIND_NAMES: Record<SectionKind, string> = {
   intro: "Intro",
   verse: "Couplet",
   prechorus: "Pré-refrain",
@@ -244,29 +248,6 @@ function diagonalMean(S: Float32Array[], L: number): Float32Array[] {
   return D;
 }
 
-function novelty(S: Float32Array[], M: number): Float64Array {
-  const N = S.length;
-  const nov = new Float64Array(N);
-  const g = (a: number) => Math.exp(-0.5 * (a / (M / 2)) ** 2);
-  for (let i = 0; i < N; i++) {
-    let s = 0;
-    for (let a = -M; a < M; a++) {
-      const ia = i + a;
-      if (ia < 0 || ia >= N) continue;
-      for (let b = -M; b < M; b++) {
-        const ib = i + b;
-        if (ib < 0 || ib >= N) continue;
-        const sign = (a < 0) === (b < 0) ? 1 : -1;
-        s += sign * g(a + 0.5) * g(b + 0.5) * S[ia][ib];
-      }
-    }
-    nov[i] = Math.max(0, s);
-  }
-  const mx = Math.max(...nov, EPS);
-  for (let i = 0; i < N; i++) nov[i] /= mx;
-  return nov;
-}
-
 function relNorm(xs: number[], lo = 10, hi = 95): number[] {
   const a = percentile(xs, lo), b = percentile(xs, hi);
   return xs.map((x) => clamp((x - a) / (b - a + EPS), 0, 1));
@@ -284,6 +265,7 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
 
   const energy = relNorm(u.rmsDb);
   const vocalN = relNorm(u.vocal);
+  const lyrN = relNorm(repetitionCurve(inp.frames, u), 5, 95);
 
   // ---- repetition / hook ----
   const L = Math.max(4, Math.min(beatSync ? u.perBar * 4 : 16, Math.floor(N / 4)));
@@ -313,7 +295,7 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
   let hookIdx = 0, hookBest = -1;
   for (let i = 0; i < M; i++) {
     const rep = Math.min(1, repCount[i] / 3) * clamp((repStrength[i] - theta) / (1 - theta + EPS) * 0.5 + 0.5, 0, 1);
-    const h = 0.45 * rep + 0.35 * winMean(energy, i, L) + 0.2 * winMean(vocalN, i, L);
+    const h = P.hook.rep * rep + P.hook.lyr * winMean(lyrN, i, L) + P.hook.energy * winMean(energy, i, L) + P.hook.vocal * winMean(vocalN, i, L);
     hookness[i] = h;
     const aligned = u.isBar[i] ? 1 : 0.92; // prefer bar starts
     if (h * aligned > hookBest) {
@@ -340,136 +322,8 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
   const hookEnd = u.times[Math.min(N, hookIdx + L)] ?? inp.duration;
   const hookConf = clamp(hookBest * (occurrences.length >= 2 ? 1.1 : 0.6), 0, 1);
 
-  // ---- sections ----
-  const Mk = beatSync ? u.perBar * 2 : 8;
-  const novS = novelty(S, Mk);
-  // loudness novelty: modern arrangements change level at section borders
-  const novE = new Float64Array(N);
-  for (let i = 0; i < N; i++) {
-    const a = mean(u.rmsDb.slice(Math.max(0, i - Mk), i));
-    const b = mean(u.rmsDb.slice(i, Math.min(N, i + Mk)));
-    novE[i] = i >= 2 && i <= N - 2 ? Math.abs(b - a) : 0;
-  }
-  const mxE = Math.max(...novE, EPS);
-  const nov = novS.map((v, i) => 0.6 * v + 0.4 * (novE[i] / mxE));
-  const minDist = beatSync ? u.perBar * 4 : 16;
-  const thr = mean(Array.from(nov)) + 0.25 * std(Array.from(nov));
-  let peaks = pickPeaks(nov, minDist, thr);
-  // snap to bar starts
-  const barIdx = u.isBar.map((b, i) => (b ? i : -1)).filter((i) => i >= 0 && i < N);
-  peaks = peaks.map((p) => barIdx.reduce((best, b) => (Math.abs(b - p) < Math.abs(best - p) ? b : best), barIdx[0] ?? p));
-  // repetition-driven segmentation: contiguous hook repeats form chorus spans
-  const spans: [number, number][] = [];
-  if (occurrences.length >= 2) {
-    for (const o of occurrences) {
-      const end = Math.min(N, o + L);
-      const last = spans[spans.length - 1];
-      if (last && o <= last[1] + 1) last[1] = Math.max(last[1], end);
-      else spans.push([o, end]);
-    }
-  }
-  const nearSpanEdge = (b: number) => spans.some(([a, e]) => (b > a && b < e) || Math.abs(b - a) < L / 2 || Math.abs(b - e) < L / 2);
-  const spanEdges = spans.flatMap(([a, e]) => [a, e]).filter((b) => b > 0 && b < N);
-  const bounds = Array.from(new Set([0, ...peaks.filter((p) => p > 0 && p < N && !nearSpanEdge(p)), ...spanEdges, N])).sort((a, b) => a - b);
-  // merge tiny sections (< 2 bars)
-  const minLen = beatSync ? u.perBar * 2 : 8;
-  for (let k = bounds.length - 2; k > 0; k--) {
-    if (spanEdges.includes(bounds[k])) continue;
-    if (bounds[k + 1] - bounds[k] < minLen || bounds[k] - bounds[k - 1] < minLen) bounds.splice(k, 1);
-  }
-
-  interface Raw { a: number; b: number; ch: Float64Array; tb: Float64Array; energy: number; vocal: number; loud: number }
-  const raws: Raw[] = [];
-  for (let k = 0; k < bounds.length - 1; k++) {
-    const a = bounds[k], b = bounds[k + 1];
-    const c = new Float64Array(12), t = new Float64Array(TIMBRE_BANDS);
-    for (let i = a; i < b; i++) {
-      for (let q = 0; q < 12; q++) c[q] += ch[i][q];
-      for (let q = 0; q < TIMBRE_BANDS; q++) t[q] += tb[i][q];
-    }
-    const nc = Math.sqrt(dot(c, c)) || 1, nt = Math.sqrt(dot(t, t)) || 1;
-    for (let q = 0; q < 12; q++) c[q] /= nc;
-    for (let q = 0; q < TIMBRE_BANDS; q++) t[q] /= nt;
-    raws.push({
-      a, b, ch: c, tb: t,
-      energy: mean(energy.slice(a, b)),
-      vocal: mean(vocalN.slice(a, b)),
-      loud: 10 * Math.log10(mean(u.rmsDb.slice(a, b).map((d) => Math.pow(10, d / 10))) + EPS),
-    });
-  }
-  // repetition link between sections: fraction of units whose matches fall in the other section
-  const link = (x: Raw, y: Raw) => {
-    let hit = 0, tot = 0;
-    for (let i = x.a; i < Math.min(x.b, M); i++) {
-      tot++;
-      if (repMatches[i].some((j) => j >= y.a - 1 && j < y.b + 1)) hit++;
-    }
-    return tot ? hit / tot : 0;
-  };
-  const sim = (x: Raw, y: Raw) => {
-    const f = 0.5 * ((dot(x.ch, y.ch) + 1) / 2) + 0.5 * ((dot(x.tb, y.tb) + 1) / 2);
-    const r = Math.max(link(x, y), link(y, x));
-    return 0.55 * f + 0.45 * r;
-  };
-  const inSpan = (r: Raw) => spans.some(([a, e]) => r.a >= a && r.b <= e);
-  const labels: string[] = [];
-  let next = 0;
-  for (let k = 0; k < raws.length; k++) {
-    let best = -1, bestK = -1;
-    for (let q = 0; q < k; q++) {
-      if (spans.length && inSpan(raws[k]) !== inSpan(raws[q])) continue;
-      if (Math.abs(raws[k].energy - raws[q].energy) > 0.3) continue; // a breakdown is not its full-band twin
-      const lenRatio = (raws[k].b - raws[k].a) / (raws[q].b - raws[q].a);
-      if (lenRatio < 0.4 || lenRatio > 2.5) continue;
-      const s = sim(raws[k], raws[q]);
-      if (s > best) {
-        best = s;
-        bestK = q;
-      }
-    }
-    if (bestK >= 0 && best > 0.74) labels.push(labels[bestK]);
-    else labels.push(String.fromCharCode(65 + Math.min(25, next++)));
-  }
-
-  // ---- naming ----
-  const count = (l: string) => labels.filter((x) => x === l).length;
-  const labelEnergy = (l: string) => mean(raws.filter((_, k) => labels[k] === l).map((r) => r.energy));
-  const hookSec = raws.findIndex((r) => hookIdx >= r.a && hookIdx < r.b);
-  const repeated = Array.from(new Set(labels)).filter((l) => count(l) >= 2);
-  let chorusLabel = hookSec >= 0 && count(labels[hookSec]) >= 2 ? labels[hookSec] : "";
-  if (!chorusLabel && repeated.length) chorusLabel = repeated.sort((a, b) => labelEnergy(b) - labelEnergy(a))[0];
-  const verseLabel =
-    repeated
-      .filter((l) => l !== chorusLabel)
-      .sort((a, b) => {
-        const dur = (l: string) => raws.filter((_, k) => labels[k] === l).reduce((s, r) => s + r.b - r.a, 0);
-        return dur(b) - dur(a);
-      })[0] ?? "";
-  const medE = percentile(raws.map((r) => r.energy), 50);
-  const firstChorus = labels.indexOf(chorusLabel);
-  const kinds: SectionKind[] = raws.map((r, k) => {
-    const l = labels[k];
-    if (l === chorusLabel && chorusLabel) return "chorus";
-    if (l === verseLabel && verseLabel) return "verse";
-    const durSec = (r.b - r.a) * unitSec;
-    if (k === 0 && (r.energy < medE - 0.1 || durSec <= 20)) return "intro";
-    if (k === raws.length - 1 && raws.length > 2 && r.energy < medE) return "outro";
-    const beforeChorus = labels[k + 1] === chorusLabel || (k + 1 < raws.length && spans.some(([a]) => a === raws[k + 1].a));
-    if (beforeChorus && durSec <= barSec * 8.5 && (count(l) >= 2 || firstChorus < 0 || k < firstChorus)) return "prechorus";
-    if (r.energy < medE - 0.25) return "break";
-    if (firstChorus >= 0 && k > firstChorus) return "bridge";
-    return k < raws.length / 2 ? "verse" : "bridge";
-  });
-  raws.forEach((r, k) => {
-    if (inSpan(r)) kinds[k] = "chorus";
-  });
-  if (!chorusLabel && !kinds.includes("chorus") && raws.length) {
-    // no repetition found: call the loudest section the hook section
-    let best = 0;
-    raws.forEach((r, k) => (r.energy > raws[best].energy ? (best = k) : 0));
-    kinds[best] = "chorus";
-  }
-  const merged: Section[] = [];
+  // ---- sections: spectral clustering of the recurrence graph ----
+  const { raws, labels, kinds } = sectionize(u, ch, tb, energy, vocalN, lyrN, beatSync, unitSec, barSec);
   const sectionsRaw: Section[] = raws.map((r, k) => ({
     start: k === 0 ? 0 : u.times[r.a],
     end: u.times[r.b] ?? inp.duration,
@@ -478,22 +332,23 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
     name: KIND_NAMES[kinds[k]],
     energy: r.energy,
     vocal: r.vocal,
+    loud: r.loud,
   }));
-  // merge consecutive pieces of the same material
+  // merge consecutive pieces of the same kind (two halves of a verse read as one verse)
+  const merged: Section[] = [];
   for (const sec of sectionsRaw) {
     const prev = merged[merged.length - 1];
-    if (prev && prev.label === sec.label && prev.kind === sec.kind) {
+    if (prev && prev.kind === sec.kind) {
       const wa = prev.end - prev.start, wb = sec.end - sec.start;
       prev.energy = (prev.energy * wa + sec.energy * wb) / (wa + wb);
       prev.vocal = (prev.vocal * wa + sec.vocal * wb) / (wa + wb);
+      prev.loud = 10 * Math.log10((Math.pow(10, prev.loud / 10) * wa + Math.pow(10, sec.loud / 10) * wb) / (wa + wb));
       prev.end = sec.end;
     } else merged.push({ ...sec });
   }
   const sections = merged;
 
-  const chorusLoud = raws.filter((_, k) => kinds[k] === "chorus").map((r) => r.loud);
-  const verseLoud = raws.filter((_, k) => kinds[k] === "verse").map((r) => r.loud);
-  const chorusLift = chorusLoud.length && verseLoud.length ? mean(chorusLoud) - mean(verseLoud) : NaN;
+  const chorusLift = liftOf(sections);
 
   // ---- timeline landmarks ----
   const chorusStarts = sections.filter((s) => s.kind === "chorus").map((s) => s.start);
@@ -598,4 +453,499 @@ export function analyzeStructure(inp: StructureInput): StructureResult {
     barSec,
     beatSynchronous: beatSync,
   };
+}
+
+/** Chorus vs verse level (LU), NaN when either is missing. */
+function liftOf(sections: Section[]): number {
+  const lvl = (k: SectionKind) => sections.filter((s) => s.kind === k).map((s) => s.loud);
+  const c = lvl("chorus"), v = lvl("verse");
+  return c.length && v.length ? mean(c) - mean(v) : NaN;
+}
+
+export const SECTION_KINDS: SectionKind[] = ["intro", "verse", "prechorus", "chorus", "bridge", "break", "outro"];
+
+/** Apply a user correction to one section and refresh what depends on the labels. */
+export function relabelSection(st: StructureResult, index: number, kind: SectionKind): StructureResult {
+  const sections = st.sections.map((s, i) => (i === index ? { ...s, kind, name: KIND_NAMES[kind], edited: true } : s));
+  const chorusStarts = sections.filter((s) => s.kind === "chorus").map((s) => s.start);
+  return {
+    ...st,
+    sections,
+    introLength: sections[0]?.kind === "intro" ? sections[0].end : 0,
+    chorusLift: liftOf(sections),
+    firstHookTime: st.hook.occurrences.length >= 2 ? st.hook.occurrences[0] : Math.min(st.hook.start, chorusStarts[0] ?? Infinity),
+  };
+}
+
+interface Raw { a: number; b: number; c: number; energy: number; vocal: number; loud: number; lyr: number }
+
+/**
+ * "Does this moment come back almost identically later or earlier?" per unit.
+ * Fine-grained (≈ 90 ms) vocal-band envelope, its change and chroma, compared
+ * along every lag ≥ 6 s with a 4 s window. Repeated lyrics (same words on the
+ * same melody) score high; verses re-using the music with new words score lower.
+ */
+function repetitionCurve(frames: FrameFeatures, u: Units): number[] {
+  const dec = Math.max(2, Math.ceil(frames.count / 3000));
+  const n = Math.floor(frames.count / dec);
+  const N = u.times.length - 1;
+  if (n < 16) return new Array(N).fill(0);
+  const vb: number[] = [];
+  frames.bandEdges.forEach((e, b) => {
+    if (b < TIMBRE_BANDS && e >= 250 && frames.bandEdges[b + 1] <= 5000) vb.push(b);
+  });
+  const FB = vb.length;
+  const mu = new Float64Array(FB), sd = new Float64Array(FB);
+  for (let f = 0; f < frames.count; f++) vb.forEach((b, q) => (mu[q] += frames.timbre[f * TIMBRE_BANDS + b] / frames.count));
+  for (let f = 0; f < frames.count; f++) vb.forEach((b, q) => (sd[q] += (frames.timbre[f * TIMBRE_BANDS + b] - mu[q]) ** 2 / frames.count));
+  for (let q = 0; q < FB; q++) sd[q] = Math.sqrt(sd[q]) + 1e-3;
+  const dim = 2 * FB + 12;
+  const cw = Math.sqrt(FB / 12);
+  const F = new Float32Array(n * dim);
+  const z = new Float64Array(FB), zp = new Float64Array(FB), c = new Float64Array(12);
+  for (let i = 0; i < n; i++) {
+    z.fill(0);
+    zp.fill(0);
+    c.fill(0);
+    for (let k = 0; k < dec; k++) {
+      const f = i * dec + k, g = Math.max(0, i * dec - dec + k);
+      for (let q = 0; q < FB; q++) {
+        z[q] += (frames.timbre[f * TIMBRE_BANDS + vb[q]] - mu[q]) / sd[q] / dec;
+        zp[q] += (frames.timbre[g * TIMBRE_BANDS + vb[q]] - mu[q]) / sd[q] / dec;
+      }
+      for (let q = 0; q < 12; q++) c[q] += frames.chroma[f * 12 + q];
+    }
+    const cm = c.reduce((s2, v) => s2 + v, 0) / 12;
+    let cn = 0;
+    for (let q = 0; q < 12; q++) cn += (c[q] - cm) ** 2;
+    cn = Math.sqrt(cn) || 1;
+    let nn = 0;
+    const o = i * dim;
+    for (let q = 0; q < FB; q++) {
+      F[o + 2 * q] = z[q];
+      F[o + 2 * q + 1] = z[q] - zp[q];
+    }
+    for (let q = 0; q < 12; q++) F[o + 2 * FB + q] = ((c[q] - cm) / cn) * cw;
+    for (let q = 0; q < dim; q++) nn += F[o + q] ** 2;
+    nn = Math.sqrt(nn) || 1;
+    for (let q = 0; q < dim; q++) F[o + q] /= nn;
+  }
+  const fps = frames.fs / frames.hop / dec;
+  const win = Math.max(3, Math.round(4 * fps)), h = win >> 1;
+  const minLag = Math.round(6 * fps);
+  const best = new Float64Array(n).fill(-1);
+  const cs = new Float64Array(n + 1);
+  for (let lag = minLag; lag < n; lag++) {
+    const len = n - lag;
+    for (let i = 0; i < len; i++) {
+      let d = 0;
+      const a = i * dim, b = (i + lag) * dim;
+      for (let q = 0; q < dim; q++) d += F[a + q] * F[b + q];
+      cs[i + 1] = cs[i] + d;
+    }
+    for (let i = 0; i < len; i++) {
+      const lo = Math.max(0, i - h), hi = Math.min(len, i + h + 1);
+      const m = (cs[hi] - cs[lo]) / (hi - lo);
+      if (m > best[i]) best[i] = m;
+      if (m > best[i + lag]) best[i + lag] = m;
+    }
+  }
+  // per unit
+  const out: number[] = [];
+  for (let k = 0; k < N; k++) {
+    const i0 = Math.min(n - 1, Math.max(0, Math.floor(((u.times[k] * frames.fs - 2048) / frames.hop) / dec)));
+    const i1 = Math.min(n, Math.max(i0 + 1, Math.ceil(((u.times[k + 1] * frames.fs - 2048) / frames.hop) / dec)));
+    let acc = 0;
+    for (let i = i0; i < i1; i++) acc += best[i];
+    out.push(acc / (i1 - i0));
+  }
+  return out;
+}
+
+/** DCT-II of log band energies without c0: an MFCC-like timbre descriptor. */
+function cepstrum(bandsDb: Float64Array, n = 12): Float64Array {
+  const B = bandsDb.length;
+  const out = new Float64Array(n);
+  for (let m = 1; m <= n; m++) {
+    let v = 0;
+    for (let b = 0; b < B; b++) v += bandsDb[b] * Math.cos((Math.PI * m * (b + 0.5)) / B);
+    out[m - 1] = v / B;
+  }
+  return out;
+}
+
+
+/**
+ * Cut the song into labelled sections and name them. Same letter = same
+ * material; names come from how each group behaves (loudness, voice,
+ * repetition, what it precedes).
+ */
+function sectionize(
+  u: Units,
+  ch: Float64Array[],
+  tb: Float64Array[],
+  energy: number[],
+  vocalN: number[],
+  lyrN: number[],
+  beatSync: boolean,
+  unitSec: number,
+  barSec: number,
+): { raws: Raw[]; labels: string[]; kinds: SectionKind[] } {
+  const N = ch.length;
+  if (N < 8) {
+    const r: Raw = { a: 0, b: N, c: 0, energy: mean(energy), vocal: mean(vocalN), loud: mean(u.rmsDb), lyr: 0 };
+    return { raws: [r], labels: ["A"], kinds: ["chorus"] };
+  }
+  // graph on (pooled) units
+  const pool = Math.ceil(N / P.maxGraphUnits);
+  const G = Math.ceil(N / pool);
+  const rep: Float64Array[] = [];
+  const path: Float64Array[] = [];
+  for (let g = 0; g < G; g++) {
+    const a = g * pool, b = Math.min(N, a + pool);
+    const f = new Float64Array(12 + TIMBRE_BANDS);
+    const bands = new Float64Array(TIMBRE_BANDS);
+    for (let i = a; i < b; i++) {
+      for (let q = 0; q < 12; q++) f[q] += ch[i][q];
+      for (let q = 0; q < TIMBRE_BANDS; q++) {
+        f[12 + q] += P.timbreWeight * tb[i][q];
+        bands[q] += u.timbre[i][q] / (b - a);
+      }
+    }
+    rep.push(f);
+    path.push(cepstrum(bands));
+  }
+  const barG = Math.max(1, Math.round((beatSync ? u.perBar : 4) / pool));
+  const emb = laplacianEmbedding(rep, path, 10, Math.max(2, Math.round(P.embeddingBars * barG)), Math.max(3, Math.round(P.smoothingBars * barG)));
+  // as many groups as the song supports without shattering sections into sub-bar-pairs
+  const fragmentation = (l: Int32Array) => {
+    let short = 0, a = 0;
+    for (let i = 1; i <= G; i++)
+      if (i === G || l[i] !== l[a]) {
+        if (i - a < 2 * barG) short += i - a;
+        a = i;
+      }
+    return short / G;
+  };
+  let lab = clusterEmbedding(emb, Math.min(3, G - 1));
+  for (let k = Math.min(P.clusters, G - 1); k > 3; k--) {
+    const l = clusterEmbedding(emb, k);
+    if (fragmentation(l) <= P.maxFragmentation) {
+      lab = l;
+      break;
+    }
+  }
+  const unitLab = Array.from({ length: N }, (_, i) => lab[Math.floor(i / pool)]);
+
+  // runs → segments; absorb fragments shorter than two bars
+  const perBar = u.perBar;
+  const minLen = beatSync ? perBar * P.minBars : 4 * P.minBars;
+  let runs: { a: number; b: number; c: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const last = runs[runs.length - 1];
+    if (last && last.c === unitLab[i]) last.b = i + 1;
+    else runs.push({ a: i, b: i + 1, c: unitLab[i] });
+  }
+  for (;;) {
+    let idx = -1, shortest = Infinity;
+    runs.forEach((r, k) => {
+      const len = r.b - r.a;
+      if (len < minLen && len < shortest && runs.length > 1) {
+        shortest = len;
+        idx = k;
+      }
+    });
+    if (idx < 0) break;
+    const r = runs[idx], prev = runs[idx - 1], next = runs[idx + 1];
+    const into = !prev ? next : !next ? prev : prev.c === next.c ? prev : prev.b - prev.a >= next.b - next.a ? prev : next;
+    into.a = Math.min(into.a, r.a);
+    into.b = Math.max(into.b, r.b);
+    runs.splice(idx, 1);
+    // join neighbours that now carry the same label
+    runs = runs.reduce<typeof runs>((acc, x) => {
+      const last = acc[acc.length - 1];
+      if (last && last.c === x.c) last.b = x.b;
+      else acc.push({ ...x });
+      return acc;
+    }, []);
+  }
+  // refine each boundary to the bar line (± two bars) where the arrangement changes most
+  if (beatSync) {
+    // timbre only: chords change every bar, arrangements change at section borders
+    const F = tb;
+    const change = (c: number) => {
+      const a = Math.max(0, c - perBar), b = Math.min(N, c + perBar);
+      if (c - a < 1 || b - c < 1) return 0;
+      const m1 = new Float64Array(F[0].length), m2 = new Float64Array(F[0].length);
+      for (let i = a; i < c; i++) F[i].forEach((v, q) => (m1[q] += v / (c - a)));
+      for (let i = c; i < b; i++) F[i].forEach((v, q) => (m2[q] += v / (b - c)));
+      let d = 0;
+      for (let q = 0; q < m1.length; q++) d += (m1[q] - m2[q]) ** 2;
+      return d + 4 * (mean(energy.slice(a, c)) - mean(energy.slice(c, b))) ** 2;
+    };
+    for (let k = 1; k < runs.length; k++) {
+      const b0 = runs[k].a;
+      let best = b0, bestScore = -1;
+      for (let c = Math.max(runs[k - 1].a + 1, b0 - P.refineBars * perBar); c <= Math.min(runs[k].b - 1, b0 + P.refineBars * perBar); c++) {
+        if (!u.isBar[c]) continue;
+        const sc = change(c);
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = c;
+        }
+      }
+      runs[k - 1].b = best;
+      runs[k].a = best;
+    }
+  }
+  const bar = beatSync ? perBar : 4;
+  const piece = (a: number, b: number, c: number): Raw => ({
+    a,
+    b,
+    c,
+    energy: mean(energy.slice(a, b)),
+    vocal: mean(vocalN.slice(a, b)),
+    loud: 10 * Math.log10(mean(u.rmsDb.slice(a, b).map((d) => Math.pow(10, d / 10))) + EPS),
+    lyr: mean(lyrN.slice(a, b)),
+  });
+  const segs = runs.map((r) => piece(r.a, r.b, r.c));
+  const snap = (i: number, lo: number, hi: number) => {
+    if (!beatSync) return i;
+    for (let d = 0; d <= bar / 2; d++) {
+      if (i - d > lo && u.isBar[i - d]) return i - d;
+      if (i + d < hi && u.isBar[i + d]) return i + d;
+    }
+    return i;
+  };
+
+  // ---- choruses: where the song comes back almost identically ----
+  const win = Math.max(1, Math.round(P.chorusSmoothSec / unitSec)) | 1;
+  const sm = movingAverage(lyrN, win);
+  const thr = otsuThreshold(sm);
+  const on = sm.map((v) => v > thr);
+  const contrast = mean(sm.filter((_, i) => on[i])) - mean(sm.filter((_, i) => !on[i]));
+  let chorusRuns = contrast >= P.minContrast ? runsOf(on) : [];
+  // close gaps shorter than two bars, drop runs shorter than four
+  chorusRuns = chorusRuns.reduce<{ a: number; b: number }[]>((acc, r) => {
+    const last = acc[acc.length - 1];
+    if (last && r.a - last.b < 2 * bar) last.b = r.b;
+    else acc.push({ ...r });
+    return acc;
+  }, []);
+  chorusRuns = chorusRuns.filter((r) => r.b - r.a >= 4 * bar);
+  if (!chorusRuns.length) {
+    // no clear repetition: the most repeated, loudest group of sections
+    const groups = Array.from(new Set(segs.map((r) => r.c)));
+    const score = (c: number) => {
+      const rs = segs.filter((r) => r.c === c);
+      return mean(rs.map((r) => r.lyr)) + 0.5 * mean(rs.map((r) => r.energy)) + (rs.length >= 2 ? 0.3 : 0);
+    };
+    const best = groups.reduce((x, c) => (score(c) > score(x) ? c : x), groups[0]);
+    chorusRuns = segs.filter((r) => r.c === best).map((r) => ({ a: r.a, b: r.b }));
+  }
+  // edges: the bar line (± two bars) where the repetition curve steps up (start) or down (end)
+  const step = (c: number, w: number) => mean(lyrN.slice(c, Math.min(N, c + w))) - mean(lyrN.slice(Math.max(0, c - w), c));
+  const edge = (i: number, lo: number, hi: number, dir: 1 | -1) => {
+    if (i <= 0 || i >= N) return i;
+    let best = snap(i, lo, hi), bestScore = -Infinity;
+    for (let c = Math.max(lo + 1, i - 2 * bar); c <= Math.min(hi - 1, i + 2 * bar); c++) {
+      if (beatSync && !u.isBar[c]) continue;
+      const sc = dir * step(c, 2 * bar);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = c;
+      }
+    }
+    return best;
+  };
+  for (const r of chorusRuns) {
+    r.a = edge(r.a, 0, r.b, 1);
+    r.b = edge(r.b, r.a, N + 1, -1);
+  }
+  // quieter material that also repeats word for word (a verse sung twice the
+  // same way, an intro/outro pair) is not the chorus
+  {
+    const sub: { a: number; b: number; e: number }[] = [];
+    for (const r of chorusRuns) {
+      const inner = segs.map((x) => x.a).filter((x) => x > r.a && x < r.b);
+      [r.a, ...inner, r.b].forEach((x, k, arr) => {
+        if (k < arr.length - 1) sub.push({ a: x, b: arr[k + 1], e: mean(energy.slice(x, arr[k + 1])) });
+      });
+    }
+    const big = sub.filter((x) => x.b - x.a >= 4 * bar);
+    const eMax = Math.max(...(big.length ? big : sub).map((x) => x.e));
+    const kept = sub.filter((x) => x.e >= eMax - P.chorusEnergyGap || x.b - x.a < 2 * bar);
+    const rebuilt = kept.reduce<{ a: number; b: number }[]>((acc, x) => {
+      const last = acc[acc.length - 1];
+      if (last && last.b === x.a) last.b = x.b;
+      else acc.push({ a: x.a, b: x.b });
+      return acc;
+    }, []).filter((r) => r.b - r.a >= 4 * bar);
+    if (rebuilt.length) chorusRuns = rebuilt;
+  }
+  // an opening "repeat" is almost always an instrumental intro re-using later music:
+  // keep it as a chorus only when it is as loud as the other choruses
+  if (chorusRuns.length > 1 && chorusRuns[0].a === 0) {
+    const r0 = chorusRuns[0];
+    const eOthers = mean(chorusRuns.slice(1).flatMap((r) => energy.slice(r.a, r.b)));
+    const cut = segs.find((x) => x.a > r0.a + 2 * bar && x.a < r0.b && (x.a - r0.a) * unitSec <= P.introMaxSec)?.a;
+    const loudStart = mean(energy.slice(r0.a, r0.b)) >= eOthers - P.introEnergyGap;
+    if (!loudStart) {
+      if ((r0.b - r0.a) * unitSec <= P.introMaxSec) chorusRuns.shift();
+      else if (cut !== undefined) r0.a = cut;
+    }
+  }
+  const insideChorus = (i: number) => chorusRuns.some((r) => i > r.a && i < r.b);
+
+  // ---- pieces: chorus runs + the clustering's boundaries elsewhere ----
+  const cuts = new Set<number>([0, N]);
+  for (const r of chorusRuns) {
+    cuts.add(r.a);
+    cuts.add(r.b);
+  }
+  for (const r of segs) if (r.a > 0 && !insideChorus(r.a)) cuts.add(r.a);
+  const sorted = Array.from(cuts).sort((x, y) => x - y);
+  const majority = (a: number, b: number) => {
+    const cnt = new Map<number, number>();
+    for (let i = a; i < b; i++) cnt.set(unitLab[i], (cnt.get(unitLab[i]) ?? 0) + 1);
+    return Array.from(cnt).reduce((x, y) => (y[1] > x[1] ? y : x), [-1, -1])[0];
+  };
+  let parts = sorted.slice(0, -1).map((a, k) => ({ a, b: sorted[k + 1], chorus: chorusRuns.some((r) => a >= r.a && sorted[k + 1] <= r.b) }));
+  // absorb non-chorus slivers shorter than two bars
+  for (;;) {
+    const k = parts.findIndex((x) => !x.chorus && x.b - x.a < 2 * bar && parts.length > 1);
+    if (k < 0) break;
+    const prev = parts[k - 1], next = parts[k + 1];
+    const into = prev && !prev.chorus ? prev : next && !next.chorus ? next : prev ?? next;
+    into.a = Math.min(into.a, parts[k].a);
+    into.b = Math.max(into.b, parts[k].b);
+    parts.splice(k, 1);
+  }
+  parts = parts.reduce<typeof parts>((acc, x) => {
+    const last = acc[acc.length - 1];
+    if (last && last.chorus && x.chorus) last.b = x.b;
+    else acc.push({ ...x });
+    return acc;
+  }, []);
+  const raws: Raw[] = parts.map((x) => piece(x.a, x.b, majority(x.a, x.b)));
+  const isChorus = parts.map((x) => x.chorus);
+
+  // ---- naming ----
+  const dur = (r: Raw) => (r.b - r.a) * unitSec;
+  const medE = percentile(raws.map((r) => r.energy), 50);
+  const count = (c: number) => raws.filter((r, k) => !isChorus[k] && r.c === c).length;
+  const firstChorus = isChorus.indexOf(true);
+  const kinds: SectionKind[] = raws.map((r, k) => {
+    const d = dur(r);
+    if (isChorus[k]) return "chorus";
+    if (k === 0 && k < firstChorus && (d <= 12 || (d <= 40 && (r.energy < medE - 0.1 || r.vocal < 0.3)))) return "intro";
+    if (k === raws.length - 1 && raws.length > 2 && (d <= 16 || r.energy < medE - 0.1)) return "outro";
+    const prev = raws[k - 1];
+    if (isChorus[k + 1] && d >= barSec * 3.5 && d <= barSec * 10.5 && prev && !isChorus[k - 1] && prev.c !== r.c && k - 1 > 0) return "prechorus";
+    if (r.energy < medE - 0.3 && r.vocal < 0.4) return "break";
+    if (firstChorus >= 0 && k > firstChorus && count(r.c) === 1 && k < raws.length - 1 && !raws.slice(0, firstChorus).some((x) => x.c === r.c)) return "bridge";
+    return "verse";
+  });
+  // a short low-energy lead-in glued to a chorus is its pre-chorus
+  raws.forEach((r, k) => {
+    if (!isChorus[k] || !kinds[k - 1] || kinds[k - 1] === "prechorus") return;
+    const inner = segs.filter((x) => x.a > r.a && x.a < r.b).map((x) => x.a);
+    for (const p of inner) {
+      const head = p - r.a, tail = r.b - p;
+      if (head >= 4 * bar && head <= 10 * bar && tail >= 4 * bar && mean(energy.slice(r.a, p)) < mean(energy.slice(p, r.b)) - P.preEnergyGap) {
+        raws.splice(k, 1, piece(r.a, p, majority(r.a, p)), piece(p, r.b, majority(p, r.b)));
+        kinds.splice(k, 1, "prechorus", "chorus");
+        isChorus.splice(k, 1, false, true);
+        break;
+      }
+    }
+  });
+  debugHook?.({ lyrN, sm, thr, times: u.times, raws, kinds, unitSec, segs, unitLab, chorusRuns });
+  // letters: same material → same letter
+  const letter = new Map<string, string>();
+  const labels = raws.map((r, k) => {
+    const key = kinds[k] === "chorus" || kinds[k] === "prechorus" ? kinds[k] : `c${r.c}`;
+    if (!letter.has(key)) letter.set(key, String.fromCharCode(65 + Math.min(25, letter.size)));
+    return letter.get(key)!;
+  });
+  return { raws, labels, kinds };
+}
+
+function movingAverage(xs: number[], w: number): number[] {
+  const h = w >> 1;
+  const cs = [0];
+  for (const x of xs) cs.push(cs[cs.length - 1] + x);
+  return xs.map((_, i) => {
+    const a = Math.max(0, i - h), b = Math.min(xs.length, i + h + 1);
+    return (cs[b] - cs[a]) / (b - a);
+  });
+}
+
+/** Threshold maximising the between-class variance (Otsu). */
+function otsuThreshold(xs: number[]): number {
+  const sortedX = xs.slice().sort((a, b) => a - b);
+  let best = -1, thr = sortedX[sortedX.length >> 1] ?? 0.5;
+  for (let q = 1; q < 60; q++) {
+    const t = sortedX[Math.floor((q / 60) * (sortedX.length - 1))];
+    let n1 = 0, n2 = 0, s1 = 0, s2 = 0;
+    for (const x of xs) {
+      if (x <= t) {
+        n1++;
+        s1 += x;
+      } else {
+        n2++;
+        s2 += x;
+      }
+    }
+    if (!n1 || !n2) continue;
+    const v = (n1 / xs.length) * (n2 / xs.length) * (s1 / n1 - s2 / n2) ** 2;
+    if (v > best) {
+      best = v;
+      thr = t;
+    }
+  }
+  return thr;
+}
+
+function runsOf(mask: boolean[]): { a: number; b: number }[] {
+  const out: { a: number; b: number }[] = [];
+  mask.forEach((m, i) => {
+    if (!m) return;
+    const last = out[out.length - 1];
+    if (last && last.b === i) last.b = i + 1;
+    else out.push({ a: i, b: i + 1 });
+  });
+  return out;
+}
+
+/**
+ * Tuning, measured on JamendoLyrics (79 CC-licensed songs, chorus = repeated
+ * lyric lines): chorus/verse agreement on sung passages 0.64 → 0.82.
+ */
+const P = {
+  clusters: 6, // upper bound; fewer when sections would shatter
+  maxFragmentation: 0.08,
+  embeddingBars: 2,
+  smoothingBars: 2.25,
+  maxGraphUnits: 300,
+  minBars: 4,
+  timbreWeight: 0.8,
+  refineBars: 2,
+  chorusSmoothSec: 6,
+  minContrast: 0.15,
+  chorusEnergyGap: 0.4,
+  introMaxSec: 30,
+  introEnergyGap: 0,
+  preEnergyGap: 0.1,
+  hook: { rep: 0.2, lyr: 0.5, energy: 0.3, vocal: 0 },
+};
+export type StructureParams = typeof P;
+let debugHook: ((info: unknown) => void) | null = null;
+
+/** Override tuning parameters (offline evaluation). */
+export function setStructureParams(p: Partial<Omit<StructureParams, "hook">> & { hook?: Partial<StructureParams["hook"]>; debug?: (info: unknown) => void }) {
+  const { hook, debug, ...rest } = p;
+  Object.assign(P, rest);
+  if (hook) Object.assign(P.hook, hook);
+  if (debug) debugHook = debug;
 }

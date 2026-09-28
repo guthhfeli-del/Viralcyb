@@ -4,6 +4,7 @@ import { useDisplayBpm, useGenre, useVirality } from "../state/hooks";
 import { Gauge } from "../ui/Gauge";
 import { Waveform } from "../ui/Waveform";
 import { TimbreMap } from "../ui/Charts";
+import { SectionEditor, hookSection } from "../ui/Structure";
 import { Bar, Button, Panel, Stat, scoreTone } from "../ui/Bits";
 import { player } from "../lib/player";
 import { usePlayer } from "../lib/usePlayer";
@@ -26,6 +27,7 @@ export default function Score() {
     player.play(start);
   };
   const loopOn = snap.loop && Math.abs(snap.loop.start - clip.start) < 0.01;
+  const hookSec = s.sections[hookSection(s)];
   return (
     <div className="page page--score">
       <section className="scorehero rise">
@@ -58,7 +60,7 @@ export default function Score() {
         <Stat label="Tempo" value={Math.round(bpm ?? features.rhythm.bpm)} unit="BPM" hint={features.rhythm.confidence < 0.2 ? "incertain" : undefined} />
         <Stat label="Tonalité" value={features.key.short} hint={`${features.key.nameFr} · ${features.key.camelot}`} />
         <Stat label="Loudness" value={fmt(features.loudness.integrated)} unit="LUFS" />
-        <Stat label="Hook" value={`${s.hook.occurrences.length}×`} hint={`dès ${formatTime(s.firstHookTime)}`} tone="accent" />
+        <Stat label="Hook" value={`${s.hook.occurrences.length}×`} hint={`dès ${formatTime(s.firstHookTime)}${hookSec ? ` · ${hookSec.name.toLowerCase()}` : ""}`} tone="accent" />
         <Stat label="Durée" value={formatTime(features.meta.duration)} />
       </div>
 
@@ -67,6 +69,7 @@ export default function Score() {
           <Waveform features={features} height={150} clip={clip} />
           <TimbreMap map={features.timbreMap} height={36} />
         </div>
+        <SectionEditor structure={s} duration={features.meta.analysedDuration} onPlay={playRegion} />
         <div className="timeline__actions">
           <Button variant="accent" icon={loopOn && snap.playing ? "pause" : "loop"} onClick={() => (loopOn && snap.playing ? player.pause() : playRegion(clip.start, clip.end))}>
             Extrait TikTok {formatTime(clip.start)}–{formatTime(clip.end)}
