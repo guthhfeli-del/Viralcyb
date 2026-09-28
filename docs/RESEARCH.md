@@ -39,7 +39,10 @@
 | Détection IA | **SONICS / SpecTTTra** (ICLR 2025, MIT) | Modèle entraîné sur 97k chansons (49k générées par Suno/Udio) |
 | Clone de voix chantée | **Seed-VC** (GPL-3.0, ~3,9k ★) | Zéro-shot à partir de 1–30 s de voix, conditionnement f0 pour le chant |
 | Versions IA dans un autre genre | **ACE-Step 1.5** (MIT, ~12,9k ★, n°1 du topic GitHub *ai-music*) | Tâche « cover » pilotée par le morceau source, API REST, ≥ 4 Go de VRAM |
-| Variantes de paroles | API **Claude** | Réécritures fondées sur le texte de l'artiste, sortie structurée |
+| Variantes de paroles | **Claude via OpenRouter** (ou API Anthropic) | Réécritures fondées sur le texte de l'artiste, sortie JSON stricte |
+| Transcription sans GPU | **Whisper via OpenRouter** (`openai/whisper-1`) | Aucune installation, audio envoyé en FLAC 16 kHz mono |
+| Stems sans serveur | **[demucs-web](https://github.com/timcsy/demucs-web)** (MIT) : HT-Demucs exporté en ONNX, exécuté avec ONNX Runtime Web | 4 stems dans le navigateur, WebGPU ou CPU, modèle de 172 Mo mis en cache |
+| Audio → MIDI sans serveur | **[Basic Pitch TS](https://github.com/spotify/basic-pitch-ts)** (Apache-2.0) | Même modèle que la version Python, embarqué (≈ 1 Mo), TensorFlow.js |
 
 **Écartés à dessein.**
 - Le code du détecteur de Deezer (*A Fourier Explanation of AI-music Artifacts*, meilleur article ISMIR 2025) est sous **CC BY-NC 4.0** et couvert par des demandes de brevet : non réutilisable commercialement. Les indices locaux de Viral Cyb reposent sur une implémentation indépendante (stationnarité des pics fins entre sections, bande passante, netteté des transitoires) et sont présentés comme des indices, pas comme un verdict.
@@ -48,7 +51,10 @@
 ## 4. Ce qui tourne où
 
 - **Navigateur (TypeScript, Web Worker)** : loudness BS.1770-4 (conforme aux cas de test EBU 3341), true peak 4×, spectre 1/3 d'octave vs cibles par genre, stéréo, tempo + beats (programmation dynamique d'Ellis), tonalité (profils Krumhansl-Kessler + Temperley), structure et hook (matrices d'auto-similarité, nouveauté de Foote, répétitions diagonales), score viral, conseils, mastering (EQ, basses mono, compression de bus, saturation, limiteur look-ahead true-peak, recherche de loudness), versions (OfflineAudioContext), séparation rapide par extraction du centre, YIN temps réel + prédiction de notes, analyse des paroles.
-- **Serveur (Python, optionnel)** : les modèles de la section 3.
+- **Navigateur, modèles neuronaux (Web Worker dédié)** : HT-Demucs (ONNX Runtime Web, WebGPU puis WASM multi-thread grâce aux en-têtes COOP/COEP) et Basic Pitch (TensorFlow.js).
+- **Serveur (Python, optionnel)** : OpenRouter (paroles, transcription) et les modèles GPU de la section 3.
+
+**Alternatives étudiées pour ce qui demande un GPU.** Pour le clone de voix chantée (Seed-VC), la génération musicale (ACE-Step) et le détecteur SONICS, aucun portage navigateur de qualité équivalente n'existe à ce jour. Les voies réalistes sont un GPU loué à l'heure (RunPod, Vast.ai…) ou ponctuel et gratuit (Colab, Spaces ZeroGPU) ; SONICS reste utilisable sur CPU.
 
 ## 5. Limites connues
 

@@ -11,9 +11,9 @@ Viral Cyb est une application web installable (téléphone et ordinateur) qui an
 | 03 | **Test supports** | Écoute en temps réel comme sur un téléphone, des écouteurs, un laptop, en voiture, sur une enceinte Bluetooth, en club, à la radio FM ou en mono — avec un score de traduction par support. | navigateur |
 | 04 | **Mastering** | Presets Streaming / Équilibré / TikTok / Club / Chaleureux, EQ correctif automatique, basses mono, compression de bus, saturation, limiteur true-peak −1 dBTP, cible LUFS, A/B à volume égal, export WAV 24/16 bits, master par référence (local ou Matchering). | navigateur (+ serveur) |
 | 05 | **Versions virales** | Sped up, nightcore, slowed + reverb, 8D, bass boost, lo-fi, extrait TikTok calé sur les mesures, boucle ×3, instru rapide — et réinterprétation IA dans un autre genre (ACE-Step). | navigateur (+ serveur) |
-| 06 | **Stems** | Voix, batterie, basse, guitare, piano, autres (Demucs v4 / BS-RoFormer), mixeur multipiste ; séparation rapide locale sans serveur. | serveur (+ navigateur) |
-| 07 | **Paroles** | Syllabes, schéma de rimes, lignes les plus « hook », phrases signature, title-drop, restructurations ; variantes réécrites par Claude (plus accrocheur, hook TikTok, version anglaise, radio…). | navigateur (+ serveur) |
-| 08 | **Micro prédictif** | Chante : ta topline s'écrit en notes en direct sur un piano roll, la tonalité se cale, la note suivante la plus probable s'affiche ; paroles en direct, export MIDI, variations de hook, chant sur le beat. | navigateur |
+| 06 | **Stems** | Voix, batterie, basse, autres **dans le navigateur** (HT-Demucs via ONNX, WebGPU ou CPU, sans serveur) ; 6 stems / RoFormer côté serveur ; mixeur multipiste ; chaque stem exportable en MIDI. | navigateur (+ serveur) |
+| 07 | **Paroles** | Syllabes, schéma de rimes, lignes les plus « hook », phrases signature, title-drop, restructurations ; variantes réécrites par l'IA via OpenRouter (plus accrocheur, hook TikTok, version anglaise, radio…) ; transcription Whisper. | navigateur (+ serveur) |
+| 08 | **Micro prédictif** | Chante : ta topline s'écrit en notes en direct sur un piano roll, la tonalité se cale, la note suivante la plus probable s'affiche ; paroles en direct, export MIDI, variations de hook, chant sur le beat ; import polyphonique (Basic Pitch) pour les instruments et accords. | navigateur |
 | 09 | **Clone de voix** | Ta voix (10–30 s) sur n'importe quelle topline, avec consentement obligatoire (Seed-VC). | serveur |
 | 10 | **Détecteur IA** | Indices spectraux locaux + modèle SONICS entraîné sur Suno/Udio. | navigateur (+ serveur) |
 
@@ -33,11 +33,28 @@ npm run dev        # http://localhost:5173 — sur le même Wi-Fi, ouvre l'URL "
 
 Bouton **« Essayer avec le son démo »** sur l'accueil pour tout tester sans fichier.
 
-**Front + serveur (stems, Matchering, Whisper, SONICS, Seed-VC, ACE-Step, Claude) :**
+**Front + serveur (paroles IA, transcription, Matchering, et les moteurs GPU si tu en as) :**
 
 ```bash
+cp .env.example .env                 # puis renseigne OPENROUTER_API_KEY
 docker compose up --build            # http://localhost:8000
 ```
+
+Avec seulement `OPENROUTER_API_KEY`, le serveur active les **variantes de paroles** (Claude via OpenRouter) et la **transcription des paroles** (Whisper via OpenRouter) — aucun GPU requis.
+
+## Ce qui marche sans GPU, et les alternatives
+
+| Besoin | Sans GPU ni serveur | Avec la clé OpenRouter | Qualité maximale (GPU) |
+|---|---|---|---|
+| Stems | **Demucs dans le navigateur** (4 stems, modèle 172 Mo mis en cache) | — | Demucs 6 stems / BS-RoFormer (serveur) |
+| Audio → MIDI | **Basic Pitch dans le navigateur** (polyphonique) + YIN (voix) | — | — |
+| Paroles depuis l'audio | reconnaissance vocale du navigateur (en direct, approximative) | **Whisper via OpenRouter** | faster-whisper (serveur) |
+| Variantes de paroles | restructurations locales | **Claude via OpenRouter** | — |
+| Détecteur IA | indices spectraux locaux | — | SONICS (torch, CPU possible) |
+| Clone de voix | — | — | Seed-VC (GPU) |
+| Remix IA dans un autre genre | versions DSP (sped up, slowed…) | — | ACE-Step 1.5 (GPU ≥ 4 Go) |
+
+Pour les trois dernières lignes, il n'existe pas aujourd'hui d'équivalent open source de même qualité qui tourne dans un navigateur. Les options réalistes : une machine GPU louée à l'heure (RunPod, Vast.ai, Lambda…) sur laquelle tu lances `docker compose` et les services Seed-VC / ACE-Step, ou un GPU gratuit ponctuel (Google Colab, Hugging Face Spaces ZeroGPU) — voir [`server/README.md`](server/README.md).
 
 ou sans Docker : voir [`server/README.md`](server/README.md).
 

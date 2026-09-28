@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { DEMUCS_MODEL_MB, DEMUCS_MODEL_URL, isCached, isolated, separateInBrowser, transcribeNotes, webGpuAvailable } from "../lib/ml";
+import { notesToMidi } from "../dsp/midi";
 import { useStore, type Rendered } from "../state/store";
 import { dsp } from "../lib/dsp";
 import { audioContext, bufferFrom, decodeFile } from "../lib/audio";
@@ -91,42 +93,77 @@ function useStemMixer(stems: Stem[]) {
   return { playing, play, stop, state, update };
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  download: "Téléchargement du modèle",
+  prepare: "Préparation",
+  "init-gpu": "Initialisation (WebGPU)",
+  "init-cpu": "Initialisation (CPU)",
+  separate: "Séparation",
+  transcribe: "Transcription MIDI",
+};
+
 export default function Stems() {
   const track = useStore((s) => s.track)!;
   const addRendered = useStore((s) => s.addRendered);
   const server = useStore((s) => s.server);
   const [stems, setStems] = useState<Stem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pct, setPct] = useState<number | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const [model, setModel] = useState<"htdemucs_6s" | "htdemucs_ft" | "roformer">("htdemucs_6s");
+  const [cached, setCached] = useState(false);
   const mixer = useStemMixer(stems);
+  const mobile = typeof navigator !== "undefined" && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
-  const quickSplit = async () => {
+  useEffect(() => {
+    void isCached(DEMUCS_MODEL_URL).then(setCached);
+  }, []);
+
+  const run = async (label: string, fn: () => Promise<void>) => {
     setErr(null);
-    setBusy("Séparation rapide (locale)…");
+    setBusy(label);
+    setPct(undefined);
     try {
-      const r = await dsp.centerCut(track.channels, track.sampleRate);
-      const c = bufferFrom([r.center, r.center], track.sampleRate);
-      const s = bufferFrom(r.sides, track.sampleRate);
-      mixer.stop();
-      setStems([
-        { id: "center", label: STEM_LABELS.center, buffer: c },
-        { id: "sides", label: STEM_LABELS.sides, buffer: s },
-      ]);
+      await fn();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setPct(undefined);
     }
   };
 
-  const serverSplit = async () => {
-    setErr(null);
-    setBusy("Envoi du morceau…");
-    try {
+  const browserSplit = () =>
+    run("Séparation dans le navigateur…", async () => {
+      const r = await separateInBrowser(track.buffer, (stage, p) => {
+        setBusy(`${STAGE_LABELS[stage] ?? stage}${stage === "download" ? ` · ${Math.round(p * DEMUCS_MODEL_MB)} / ${DEMUCS_MODEL_MB} Mo` : ""}`);
+        setPct(p);
+      });
+      mixer.stop();
+      setStems(r.stems.map((st) => ({ id: st.id, label: STEM_LABELS[st.id], buffer: bufferFrom([st.left, st.right], r.sampleRate) })));
+      setCached(true);
+    });
+
+  const quickSplit = () =>
+    run("Séparation express…", async () => {
+      const r = await dsp.centerCut(track.channels, track.sampleRate);
+      const c = bufferFrom([r.center, r.center], track.sampleRate);
+      const sd = bufferFrom(r.sides, track.sampleRate);
+      mixer.stop();
+      setStems([
+        { id: "center", label: STEM_LABELS.center, buffer: c },
+        { id: "sides", label: STEM_LABELS.sides, buffer: sd },
+      ]);
+    });
+
+  const serverSplit = () =>
+    run("Envoi du morceau…", async () => {
       const src = track.file ?? bufferToWavBlob(track.buffer, 16);
       const job = await startJob("stems", { audio: src }, { model });
-      const done = await waitJob(job.id, (j) => setBusy(j.message ?? `Séparation… ${Math.round(j.progress * 100)} %`));
+      const done = await waitJob(job.id, (j) => {
+        setBusy(j.message ?? "Séparation…");
+        setPct(j.progress);
+      });
       const out: Stem[] = [];
       for (const f of done.result?.files ?? []) {
         setBusy(`Téléchargement : ${f.label ?? f.name}`);
@@ -137,12 +174,18 @@ export default function Stems() {
       }
       mixer.stop();
       setStems(out);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
-  };
+    });
+
+  const toMidi = (s: Stem) =>
+    run(`MIDI · ${s.label}…`, async () => {
+      const notes = await transcribeNotes(s.buffer, (stage, p) => {
+        setBusy(`${STAGE_LABELS[stage] ?? stage} · ${s.label}`);
+        setPct(p);
+      });
+      if (!notes.length) throw new Error("Aucune note détectée sur ce stem.");
+      const bpm = useStore.getState().features?.rhythm.bpm ?? 120;
+      downloadBlob(new Blob([notesToMidi(notes, Math.round(bpm), `${s.label}`) as Uint8Array<ArrayBuffer>], { type: "audio/midi" }), `${baseName(track.name)} - ${s.label}.mid`);
+    });
 
   const sendToPlayer = (s: Stem) => {
     const r: Rendered = { id: `stem-${s.id}`, label: `Stem · ${s.label}`, detail: "stem", buffer: s.buffer, createdAt: Date.now(), kind: "stem" };
@@ -156,22 +199,30 @@ export default function Stems() {
   return (
     <div className="page">
       <PageHead kicker="06 · Stems" title={<>Chaque instrument, <span className="serif italic">séparé</span>.</>}>
-        Isole la voix, la batterie, la basse, la guitare, le piano et le reste pour remixer, refaire le mix ou préparer une version a cappella / instrumentale.
+        Isole la voix, la batterie, la basse et le reste pour remixer, refaire le mix, sortir une a cappella ou une instru — puis convertis n'importe quel stem en MIDI.
       </PageHead>
 
-      <Panel index="A" title="Séparation IA" aside={<Chip tone="violet">Demucs · RoFormer</Chip>}>
-        <EngineGate
-          engine="stems"
-          what="La séparation haute qualité utilise Demucs v4 (htdemucs, Meta — MIT) et BS-RoFormer via python-audio-separator (MIT) sur le serveur Viral Cyb."
-          fallback={
-            <div className="gate__fallback">
-              <p className="muted">En attendant, la séparation rapide locale extrait le centre stéréo (voix + éléments centrés) et les côtés.</p>
-              <Button icon="stems" onClick={quickSplit} disabled={!!busy}>
-                Séparation rapide (locale)
-              </Button>
-            </div>
-          }
-        >
+      <Panel index="A" title="Séparation IA dans ton navigateur" aside={<Chip tone="green">Demucs · sans serveur</Chip>}>
+        <p className="muted">
+          Le modèle HT-Demucs de Meta tourne directement sur ton appareil ({webGpuAvailable() ? "accéléré par la carte graphique (WebGPU)" : "sur le processeur"}) : rien n'est envoyé. 4 stems : voix, batterie, basse, autres.{" "}
+          {cached ? "Modèle déjà en cache." : `Premier lancement : téléchargement du modèle (${DEMUCS_MODEL_MB} Mo), ensuite il reste en cache.`}
+        </p>
+        {mobile && <p className="warnline">Sur téléphone, la séparation est lente et gourmande en mémoire : préfère un ordinateur ou le serveur.</p>}
+        <div className="actions">
+          <Button variant="primary" icon="stems" onClick={browserSplit} disabled={!!busy}>
+            Séparer en 4 stems
+          </Button>
+          <Button variant="quiet" onClick={quickSplit} disabled={!!busy}>
+            Séparation express (centre / côtés)
+          </Button>
+        </div>
+        <p className="faint footnote">
+          Compte 30 s à 1 min avec WebGPU, 2 à 4 min sans, pour un titre de 3 min.{!isolated() && " Astuce : sers l'app avec les en-têtes COOP/COEP (déjà configurés) pour activer le multi-thread."}
+        </p>
+      </Panel>
+
+      <Panel index="B" title="Séparation serveur" aside={<Chip tone="violet">6 stems · RoFormer</Chip>}>
+        <EngineGate engine="stems" what="Pour 6 stems (guitare et piano en plus) ou la voix la plus propre (BS-RoFormer), le serveur Viral Cyb utilise python-audio-separator (Demucs v4, RoFormer — MIT). GPU recommandé.">
           <Segmented
             value={model}
             onChange={setModel}
@@ -183,21 +234,19 @@ export default function Stems() {
             ]}
           />
           <div className="actions">
-            <Button variant="primary" icon="stems" onClick={serverSplit} disabled={!!busy}>
-              Séparer les stems
-            </Button>
-            <Button variant="quiet" onClick={quickSplit} disabled={!!busy}>
-              Séparation rapide locale
+            <Button variant="primary" icon="server" onClick={serverSplit} disabled={!!busy}>
+              Séparer sur le serveur
             </Button>
           </div>
           <p className="faint">{server.engines.stems?.detail}</p>
         </EngineGate>
-        {busy && <Progress label={busy} />}
-        {err && <p className="error">{err}</p>}
       </Panel>
 
+      {busy && <Progress value={pct} label={busy} />}
+      {err && <p className="error">{err}</p>}
+
       {stems.length > 0 && (
-        <Panel index="B" title="Mixeur de stems" aside={<Button size="sm" variant={mixer.playing ? "ghost" : "primary"} icon={mixer.playing ? "pause" : "play"} onClick={mixer.playing ? mixer.stop : mixer.play}>{mixer.playing ? "Pause" : "Lire ensemble"}</Button>} className="rise">
+        <Panel index="C" title="Mixeur de stems" aside={<Button size="sm" variant={mixer.playing ? "ghost" : "primary"} icon={mixer.playing ? "pause" : "play"} onClick={mixer.playing ? mixer.stop : mixer.play}>{mixer.playing ? "Pause" : "Lire ensemble"}</Button>} className="rise">
           <ul className="stems">
             {stems.map((s) => {
               const st = mixer.state[s.id] ?? { gain: 1, mute: false, solo: false };
@@ -209,6 +258,9 @@ export default function Stems() {
                   <button className={`stem__btn stem__btn--solo${st.solo ? " is-on" : ""}`} onClick={() => mixer.update(s.id, { solo: !st.solo })} aria-pressed={st.solo}>S</button>
                   <button className="iconbtn" onClick={() => sendToPlayer(s)} title="Écouter seul dans le lecteur (et tester sur les supports)">
                     <Icon name="headphones" size={16} />
+                  </button>
+                  <button className="iconbtn stem__midi" onClick={() => void toMidi(s)} disabled={!!busy} title="Convertir en MIDI (Basic Pitch, dans le navigateur)">
+                    MIDI
                   </button>
                   <button className="iconbtn" onClick={() => downloadBlob(bufferToWavBlob(s.buffer, 24), `${baseName(track.name)} - ${s.label}.wav`)} title="Télécharger">
                     <Icon name="download" size={16} />

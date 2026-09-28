@@ -12,9 +12,9 @@ const DESCRIPTIONS: Record<string, string> = {
   devices: "Téléphone, voiture, écouteurs, club, radio FM, enceinte Bluetooth, mono — en temps réel.",
   master: "Presets Streaming → Club, limiteur true-peak, master par référence, export WAV.",
   versions: "Sped up, nightcore, slowed + reverb, 8D, bass boost, lo-fi, extrait TikTok bouclé.",
-  stems: "Voix, batterie, basse, guitare, piano, autres — Demucs / RoFormer, ou séparation rapide locale.",
+  stems: "Voix, batterie, basse, autres — Demucs directement dans ton navigateur, 6 stems côté serveur, chaque stem en MIDI.",
   lyrics: "Syllabes, rimes, répétitions, lignes les plus « hook », variantes réécrites par IA.",
-  topline: "Chante : les notes s'écrivent en direct, la suivante est prédite dans la tonalité du beat.",
+  topline: "Chante : les notes s'écrivent en direct, la suivante est prédite dans la tonalité du beat. Instruments et accords en MIDI.",
   voice: "Ta voix clonée sur n'importe quelle topline (Seed-VC), avec consentement.",
   ai: "Indices spectraux d'IA générative + modèle SONICS côté serveur.",
 };

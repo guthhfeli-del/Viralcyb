@@ -61,6 +61,14 @@ def create_app(store: JobStore | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def isolation_headers(request: Request, call_next):
+        # lets the web app use SharedArrayBuffer (multi-threaded in-browser models)
+        response = await call_next(request)
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        response.headers.setdefault("Cross-Origin-Embedder-Policy", "credentialless")
+        return response
+
     def client_key(request: Request) -> str:
         return request.client.host if request.client else "anon"
 

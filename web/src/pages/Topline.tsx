@@ -11,7 +11,8 @@ import { dsp } from "../lib/dsp";
 import { player } from "../lib/player";
 import { baseName, bufferToWavBlob, downloadBlob } from "../lib/download";
 import { PianoRoll } from "../ui/PianoRoll";
-import { Button, Chip, PageHead, Panel, Progress } from "../ui/Bits";
+import { Button, Chip, PageHead, Panel, Progress, Segmented } from "../ui/Bits";
+import { transcribeNotes } from "../lib/ml";
 import { Dropzone } from "../ui/Dropzone";
 
 export default function Topline() {
@@ -32,6 +33,7 @@ export default function Topline() {
   const [now, setNow] = useState(0);
   const [words, setWords] = useState({ final: take?.words ?? "", interim: "" });
   const [busy, setBusy] = useState<string | null>(null);
+  const [importMode, setImportMode] = useState<"voice" | "poly">("voice");
   const [err, setErr] = useState<string | null>(null);
   const mic = useRef<LiveMic | null>(null);
   const committed = useRef<NoteEvent[]>([]);
@@ -117,9 +119,18 @@ export default function Topline() {
 
   const fromFile = async (file: File) => {
     setErr(null);
-    setBusy("Transcription de la topline…");
+    setBusy(importMode === "poly" ? "Transcription polyphonique (Basic Pitch)…" : "Transcription de la topline…");
     try {
       const buf = await decodeFile(file);
+      if (importMode === "poly") {
+        const ns = await transcribeNotes(buf, (_, p) => setBusy(`Transcription polyphonique (Basic Pitch) · ${Math.round(p * 100)} %`));
+        committed.current = ns;
+        setNotes(ns);
+        setPoints([]);
+        setNow(buf.duration);
+        setTake({ buffer: buf, notes: ns, blob: file, words: "" });
+        return;
+      }
       const [l, r] = stereoChannels(buf);
       const mono = new Float32Array(l.length);
       for (let i = 0; i < l.length; i++) mono[i] = 0.5 * (l[i] + r[i]);
@@ -131,8 +142,8 @@ export default function Topline() {
       setPoints(pts);
       setNow(buf.duration);
       setTake({ buffer: buf, notes: ns, blob: file, words: "" });
-    } catch {
-      setErr("Impossible de lire ce fichier.");
+    } catch (e) {
+      setErr(importMode === "poly" && e instanceof Error ? `Transcription impossible : ${e.message}` : "Impossible de lire ce fichier.");
     } finally {
       setBusy(null);
     }
@@ -259,8 +270,18 @@ export default function Topline() {
       )}
 
       <Panel index="B" title="Importer une topline" aside={<span className="label">voix a cappella</span>}>
-        <p className="muted">Une prise voix déjà enregistrée (ou le stem voix de l'onglet Stems) : elle est transcrite en notes et en MIDI, localement.</p>
-        <Dropzone compact label="Déposer une prise voix" sub="WAV, MP3, M4A… mono ou stéréo" onFile={fromFile} />
+        <p className="muted">Une prise voix (ou un stem de l'onglet Stems) est transcrite en notes et en MIDI, localement. Pour un instrument ou des accords, choisis le mode polyphonique (Basic Pitch de Spotify, dans le navigateur).</p>
+        <Segmented
+          size="sm"
+          value={importMode}
+          onChange={setImportMode}
+          ariaLabel="Type de source"
+          options={[
+            { value: "voice", label: "Voix · monophonique" },
+            { value: "poly", label: "Instrument / accords · Basic Pitch" },
+          ]}
+        />
+        <Dropzone compact label={importMode === "poly" ? "Déposer un instrument ou un stem" : "Déposer une prise voix"} sub="WAV, MP3, M4A… mono ou stéréo" onFile={fromFile} />
         {busy && <Progress label={busy} />}
       </Panel>
     </div>
