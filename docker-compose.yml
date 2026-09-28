@@ -1,0 +1,23 @@
+services:
+  viralcyb:
+    build:
+      context: .
+      args:
+        # Engines baked into the image (see server/requirements-engines.txt).
+        ENGINES: "matchering faster-whisper"
+    ports:
+      - "8000:8000"
+    environment:
+      # Lyric variants (Claude API)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Restrict in production, e.g. https://viralcyb.app
+      VIRALCYB_ALLOWED_ORIGINS: ${VIRALCYB_ALLOWED_ORIGINS:-*}
+      VIRALCYB_WHISPER_MODEL: ${VIRALCYB_WHISPER_MODEL:-small}
+      # ACE-Step 1.5 API server (see server/README.md)
+      VIRALCYB_ACESTEP_URL: ${VIRALCYB_ACESTEP_URL:-}
+    volumes:
+      - viralcyb-data:/data
+    restart: unless-stopped
+
+volumes:
+  viralcyb-data:

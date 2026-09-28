@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { useStore, type PageId } from "../state/store";
 import { Icon, type IconName } from "./Icon";
+import { serverLabel } from "./ServerDialog";
 
 export const NAV: { id: PageId; label: string; short: string; icon: IconName; needsTrack: boolean }[] = [
   { id: "score", label: "Score viral", short: "Score", icon: "score", needsTrack: true },
@@ -39,8 +40,8 @@ export function Rail({ onHome }: { onHome: () => void }) {
         ))}
       </ol>
       <div className="rail__foot">
-        <span className={`dot${server.ok ? " dot--on" : ""}`} />
-        <span className="label">{server.checked ? (server.ok ? "Moteurs IA connectés" : "Mode local") : "…"}</span>
+        <span className={`dot${serverLabel(server).on ? " dot--on" : ""}`} />
+        <span className="label">{serverLabel(server).text}</span>
       </div>
     </nav>
   );

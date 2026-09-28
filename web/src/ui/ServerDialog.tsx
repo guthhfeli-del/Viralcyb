@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../state/store";
-import { apiBase, health, setApiBase, type EngineId } from "../lib/api";
+import { apiBase, health, setApiBase, type EngineId, type Health } from "../lib/api";
 import { Icon } from "./Icon";
 import { Button } from "./Bits";
 
@@ -21,14 +21,22 @@ export async function refreshServer() {
   return h;
 }
 
+export function serverLabel(server: { ok: boolean; checked: boolean; engines: Health["engines"] }): { text: string; on: boolean } {
+  if (!server.checked) return { text: "Connexion…", on: false };
+  if (!server.ok) return { text: "Mode local", on: false };
+  const n = Object.values(server.engines).filter((e) => e?.available).length;
+  return { text: n ? `Serveur · ${n} moteur${n > 1 ? "s" : ""} IA` : "Serveur · aucun moteur", on: n > 0 };
+}
+
 export function ServerButton() {
   const [open, setOpen] = useState(false);
   const server = useStore((s) => s.server);
+  const st = serverLabel(server);
   return (
     <>
       <button className="serverbtn" onClick={() => setOpen(true)}>
-        <span className={`dot${server.ok ? " dot--on" : ""}`} />
-        <span className="label">{server.checked ? (server.ok ? "Moteurs IA connectés" : "Mode local") : "Connexion…"}</span>
+        <span className={`dot${st.on ? " dot--on" : ""}`} />
+        <span className="label">{st.text}</span>
       </button>
       {open && <ServerDialog onClose={() => setOpen(false)} />}
     </>

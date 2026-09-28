@@ -125,6 +125,7 @@ export default function Master() {
 
   if (!features) return <div className="page-loading" />;
   const rep = mastered?.report;
+  const external = !!rep && rep.chain.length === 1 && rep.chain[0].startsWith("Matchering");
   return (
     <div className="page">
       <PageHead kicker="04 · Mastering" title={<>Un master <span className="serif italic">prêt à poster</span>.</>}>
@@ -193,7 +194,7 @@ export default function Master() {
             <Stat label="Avant" value={rep.lufsIn.toFixed(1)} unit="LUFS" />
             <Stat label="Après" value={rep.lufsOut.toFixed(1)} unit="LUFS" tone={rep.reachedTarget ? "good" : "warn"} hint={rep.reachedTarget ? "cible atteinte" : "limité pour préserver le mix"} />
             <Stat label="True peak" value={rep.truePeakOut.toFixed(1)} unit="dBTP" tone={rep.truePeakOut <= -0.9 ? "good" : "warn"} />
-            <Stat label="Limiteur max" value={rep.maxGrDb.toFixed(1)} unit="dB" tone={rep.maxGrDb > 8 ? "warn" : undefined} hint={`moy. ${rep.avgGrDb.toFixed(1)} dB`} />
+            {!external && <Stat label="Limiteur max" value={rep.maxGrDb.toFixed(1)} unit="dB" tone={rep.maxGrDb > 8 ? "warn" : undefined} hint={`moy. ${rep.avgGrDb.toFixed(1)} dB`} />}
           </div>
           <ol className="chain">
             {rep.chain.map((c, i) => (

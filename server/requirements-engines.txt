@@ -1,0 +1,15 @@
+# Optional engines — install what you need (GPU strongly recommended for stems, voice, generation).
+# Stem separation: Demucs v4 + BS-RoFormer via python-audio-separator (MIT). Use [gpu] on CUDA machines.
+audio-separator[cpu]>=0.30
+# Reference mastering (GPL-3.0)
+matchering>=2.0.6
+# Lyrics transcription (MIT)
+faster-whisper>=1.0
+# Audio -> MIDI (Apache-2.0)
+basic-pitch>=0.3
+# AI-generated song detection: SONICS / SpecTTTra (MIT)
+torch>=2.2
+torchaudio>=2.2
+sonics @ git+https://github.com/awsaf49/sonics.git
+# Voice conversion (Seed-VC, GPL-3.0) and generation (ACE-Step 1.5, MIT) run as separate
+# services/checkouts — see README.md (VIRALCYB_SEEDVC_DIR, VIRALCYB_ACESTEP_URL).
