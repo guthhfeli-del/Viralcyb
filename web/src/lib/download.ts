@@ -1,10 +1,25 @@
 import { encodeWav } from "../dsp/wav";
 
+/**
+ * Browsers silently fall back to "download" for some names (long dashes,
+ * accents on some platforms): keep file names to a portable subset.
+ */
+export function safeFileName(name: string): string {
+  const cleaned = name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[‒-―]/g, "-")
+    .replace(/[^A-Za-z0-9 ._()\-]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "viralcyb";
+}
+
 export function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = name;
+  a.download = safeFileName(name);
   document.body.appendChild(a);
   a.click();
   a.remove();
